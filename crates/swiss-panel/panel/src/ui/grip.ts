@@ -44,19 +44,25 @@
  * A change ends with a window resize event: the pages that measure their space (the terminal,
  * the tab strips) remeasure, as they do for Focus mode.
  *
+ * Sizes are px at 100% (SPEC §panel.scale): the state, the store and the caller's bounds are the
+ * design size, and the pane is painted calc(Npx * var(--ui-scale)), so a pane the reader dragged
+ * grows with the interface size like the rest of the page, live. What the pointer and a rect
+ * measure is screen px, divided by the factor before it meets the state.
+ *
  * A DOM-only mechanism: no API, no app state. */
 import { h } from "../h.js";
 import { tr } from "../i18n.js";
 import { iconNode } from "./icon.js";
+import { scaledCss, uiScale } from "./ui-scale.js";
 
 export interface GripOpts {
   axis: "x" | "y";
   /** Where the size is remembered: one key per place ("side", "db-side", "db-console"). */
   key: string;
-  /** The size with nothing remembered, in px; left out, the pane's stylesheet size. */
+  /** The size with nothing remembered, in px at 100%; left out, the pane's stylesheet size. */
   size?: number;
-  /** The bounds a drag keeps to, in px. `max` may be read when the drag starts: the room the
-   *  page has then. */
+  /** The bounds a drag keeps to, in px at 100%. `max` may be read when the drag starts: the
+   *  room the page has then, measured on screen (the grip divides it by the factor). */
   min: number;
   max: number | (() => number);
   /** The pane's name, for the edge's accessible label ("Tables", "MCPs"). */
@@ -102,7 +108,7 @@ function save(o: GripOpts, s: GripState): void {
 }
 
 function maxOf(o: GripOpts): number {
-  const m = typeof o.max === "function" ? o.max() : o.max;
+  const m = typeof o.max === "function" ? o.max() / uiScale() : o.max;
   return Math.max(o.min, isFinite(m) ? m : o.min);
 }
 
@@ -141,13 +147,18 @@ export function grip(target: HTMLElement, o: GripOpts): HTMLElement {
   // The size the pane has on screen, and the one it keeps: the state's, else the measured one.
   const measured = (): number => {
     const r = target.getBoundingClientRect();
-    return Math.round((o.axis === "x" ? r.width : r.height) || o.min);
+    return Math.round((o.axis === "x" ? r.width : r.height) / uiScale() || o.min);
   };
   const current = (): number => st.size ?? measured();
   const paint = (): void => {
-    const px = st.size === null ? "" : st.size + "px";
+    const px = st.size === null ? "" : scaledCss(st.size);
     if (o.axis === "x") target.style.width = px;
-    else target.style.flex = px ? "0 1 " + px : "";
+    else {
+      // The basis apart from the shorthand: a var() inside `flex` is a value some engines'
+      // CSSOM will not parse back.
+      target.style.flex = px ? "0 1 auto" : "";
+      if (px) target.style.flexBasis = px;
+    }
     if (o.fold) target.style.display = st.folded ? "none" : "";
     g.classList.toggle("folded", st.folded);
     // A stylesheet size is unknown until laid out: the value waits for the first change.
@@ -186,7 +197,7 @@ export function grip(target: HTMLElement, o: GripOpts): HTMLElement {
   // A folded pane's drag starts from nothing, so the hand brings it back.
   // A drag that ends in a fold keeps the size the pane had when the hand took the edge, not the
   // bound the drag crossed on its way, so bringing the pane back gives it the room it had.
-  let from = 0, base = 0, moved = false, hi = 0, handled = false;
+  let from = 0, base = 0, moved = false, hi = 0, handled = false, k = 1;
   let keep: number | null = null;
   let pressed: HTMLElement | null = null;
   g.addEventListener("pointerdown", (e: PointerEvent) => {
@@ -194,6 +205,7 @@ export function grip(target: HTMLElement, o: GripOpts): HTMLElement {
     if (e.button !== 0) return;
     e.preventDefault();
     from = o.axis === "x" ? e.clientX : e.clientY;
+    k = uiScale();
     keep = st.size;
     base = st.folded ? 0 : current();
     hi = maxOf(o);
@@ -205,7 +217,7 @@ export function grip(target: HTMLElement, o: GripOpts): HTMLElement {
   });
   g.addEventListener("pointermove", (e: PointerEvent) => {
     if (!g.classList.contains("dragging")) return;
-    const travel = (o.axis === "x" ? e.clientX : e.clientY) - from;
+    const travel = ((o.axis === "x" ? e.clientX : e.clientY) - from) / k;
     const raw = base + (o.end ? -travel : travel);
     if (!moved && Math.abs(raw - base) <= 2) return;
     moved = true;

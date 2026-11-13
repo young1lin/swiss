@@ -299,7 +299,7 @@ describe("a wide result on the real console (SPEC §data.console)", () => {
     expect(ths.every((th) => th.querySelector(".db-col-grip"))).toBe(true);
     expect(ths.every((th) => th.classList.contains("db-nosort"))).toBe(true);
     expect(ths.map((th) => th.dataset.ci)).toEqual(WIDE.map((_, i) => String(i)));
-    expect(sheet("views.css")).toMatch(/\.db-grid th, \.db-grid td \{[^}]*max-width: 240px/);
+    expect(sheet("views.css")).toMatch(/\.db-grid th, \.db-grid td \{[^}]*max-width: calc\(240px \* var\(--ui-scale\)\)/);
   });
 
   it("a dragged width is kept for the same columns on the same connection", async () => {

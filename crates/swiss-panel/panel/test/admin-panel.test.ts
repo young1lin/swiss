@@ -65,12 +65,13 @@ describe("admin panel assets", () => {
     // installer (i-download), and chat's return-to-bottom (i-arrow-down), and the action pair's
     // six verb glyphs (SPEC §panel.design rule 7: i-power-off, i-stop, i-pause, i-refresh-cw,
     // i-rotate-cw, i-upload, with the three notes that say why a pair may not share one), and the
-    // transcript's speaker marks (SPEC §llm: i-user, i-bot, where the role words were) — still
-    // small, still no markup. The Apache-2.0 banner is stripped
+    // transcript's speaker marks (SPEC §llm: i-user, i-bot, where the role words were), and the
+    // interface size (SPEC §panel.scale: its three-line pre-paint step, i-text-size and the header
+    // button) — still small, still no markup. The Apache-2.0 banner is stripped
     // before counting: it is a fixed licence cost, not shell content, and it must never buy
     // anyone headroom.
     const shellBody = shell.replace(/^<!--[\s\S]*?-->\s*/, "");
-    expect(shellBody.split("\n").length).toBeLessThan(202);
+    expect(shellBody.split("\n").length).toBeLessThan(207);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {
@@ -595,7 +596,7 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
   it("ordinary pages keep an in-flow bar, while a docked workspace gives it no empty row", () => {
     expect(base).toMatch(/body.immersive .rail {[^}]*visibility: hidden/);
     expect(base).not.toMatch(/body.immersive .rail {[^}]*display: none/);
-    expect(base).toMatch(/body.immersive .ctxbar {[^}]*height: 40px/);
+    expect(base).toMatch(/body.immersive .ctxbar {[^}]*height: calc\(40px \* var\(--ui-scale\)\)/);
     expect(base).not.toMatch(/body.immersive .ctxbar {[^}]*(?:visibility: hidden|height: 0|position: fixed)/);
     expect(base).toMatch(/body.immersive.immersive-docked .ctxbar {[^}]*height: 0/);
   });

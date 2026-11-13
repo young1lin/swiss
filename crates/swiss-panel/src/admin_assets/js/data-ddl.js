@@ -227,8 +227,8 @@ function paintDbDdlSheet()       {
     body.push(field({ group: true, label: tr("dataDdl.columns"), control: h("div", null,
       h("table", { class: "db-ddl-grid", id: "ddl-grid" },
         h("colgroup",
-          h("col", { style: "width:22%" }), h("col", { style: "width:24%" }), h("col", { style: "width:56px" }),
-          h("col", { style: "width:20%" }), h("col", { style: "width:28%" }), h("col", { style: "width:26px" })),
+          h("col", { style: "width:22%" }), h("col", { style: "width:24%" }), h("col", { style: "width:calc(56px * var(--ui-scale))" }),
+          h("col", { style: "width:20%" }), h("col", { style: "width:28%" }), h("col", { style: "width:calc(26px * var(--ui-scale))" })),
         h("thead", null, h("tr", null,
           DDL_HEAD.map((hd        )         => {
             return h("th", null, hd ? tr(hd) : hd);

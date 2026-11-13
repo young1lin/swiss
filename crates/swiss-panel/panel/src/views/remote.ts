@@ -267,7 +267,7 @@ function openWriteSheet(t: RemoteTargetRow): void {
         control: h("input", { id: "rmw-path", placeholder: tr("remote.pathPlaceholder"), autocomplete: "off" }),
         hint: t.workspaceRoot ? tr("remote.pathHint", { root: t.workspaceRoot }) : undefined,
       }),
-      field({ label: tr("remote.contents"), control: h("textarea", { id: "rmw-body", spellcheck: false, style: "min-height:180px" }) }),
+      field({ label: tr("remote.contents"), control: h("textarea", { id: "rmw-body", spellcheck: false, style: "min-height:calc(180px * var(--ui-scale))" }) }),
     ],
     foot: [
       btn(tr("remote.cancel"), { id: "rmw-cancel" }),

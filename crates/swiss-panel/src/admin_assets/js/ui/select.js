@@ -32,6 +32,7 @@
  * ui/menu.ts: one at a time, closed by a click outside, Escape, Tab, a resize, or its trigger
  * leaving the DOM or scrolling out of view; while the trigger scrolls it follows. */
 import { h } from "../h.js";
+import { scaled, scaledCss } from "./ui-scale.js";
 
 // Prototype accessors, resolved lazily: importing this module under a DOM-stubbed Node (the
 // panel boot test) must not throw on a browser global that only exists where a select does.
@@ -78,14 +79,19 @@ function paint(sel                   , trig                   )       {
   if (disDesc) trig.disabled = disDesc.get.call(sel);
 }
 
+/** The open list's height before it scrolls, in px at 100%. */
+const SELECT_MAX_H = 280;
+
 /** Below the trigger, unless that runs off the window - then above it. Same policy as
  *  popupMenu. The list is fixed to the window, so it is placed again whenever the trigger
  *  moves under it (onScroll). */
 function place(menu             , trig                   )       {
   const r = trig.getBoundingClientRect();
-  menu.style.maxHeight = Math.max(0, Math.min(280, window.innerHeight - 16)) + "px";
+  // The list's height cap is px at 100%, at the interface size in force (SPEC §panel.scale).
+  const cap = scaled(SELECT_MAX_H);
+  menu.style.maxHeight = Math.max(0, Math.min(cap, window.innerHeight - 16)) + "px";
   menu.style.maxWidth = Math.max(0, window.innerWidth - 16) + "px";
-  const mh = Math.min(menu.offsetHeight, window.innerHeight - 16, 280);
+  const mh = Math.min(menu.offsetHeight, window.innerHeight - 16, cap);
   const left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8));
   menu.style.left = left + "px";
   const below = r.bottom + 4;
@@ -143,7 +149,7 @@ function openMenuFor(sel                   , trig                   )       {
   }
   if (!items.length) return; // nothing to choose - the trigger stays inert
   document.body.appendChild(menu);
-  menu.style.maxHeight = "280px";
+  menu.style.maxHeight = scaledCss(SELECT_MAX_H);
   place(menu, trig);
 
   openState = { menu: menu, trig: trig, sel: sel, items: items };

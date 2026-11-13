@@ -32,6 +32,7 @@ import { mcpDetail, selectedMcp } from "./mcp-state.js";
 import { locale, tr, trn } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
 import { setIconBtn } from "./ui/button.js";
+import { scaled } from "./ui/ui-scale.js";
 import { closeSheet } from "./ui/sheet.js";
 import {
   btn, card, dot, field, form, formActions, hint, iconBtn, isLocalAddress, kvRow, note, redacted, row, section, setActionBtn, sheet, showSheet, spinner, tag,
@@ -119,10 +120,11 @@ function histOpen()       {
   const pop = document.createElement("div");
   pop.className = "hist-pop";
   pop.id = "r-hist-pop";
-  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - Math.min(780, window.innerWidth * .92) - 8)) + "px";
+  // The popover's width and height are the stylesheet's px at 100%, at the size in force (SPEC §panel.scale).
+  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - Math.min(scaled(780), window.innerWidth * .92) - 8)) + "px";
   // Drop below the button; flip above when that would run off the bottom of the viewport.
   const below = r.bottom + 6;
-  const est = Math.min(340, window.innerHeight - 24);
+  const est = Math.min(scaled(340), window.innerHeight - 24);
   pop.style.top = (below + est > window.innerHeight ? Math.max(8, r.top - est - 6) : below) + "px";
   // Left pane: the filter box pinned above the rows it narrows. The input is NOT rebuilt while
   // typing — only #r-hist-list's children are swapped (renderHistoryOnly), so focus survives.

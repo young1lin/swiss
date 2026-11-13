@@ -93,6 +93,7 @@ and write tolerates blocked storage.
 | Key | Holds |
 |---|---|
 | `swiss_theme`, `swiss_lang` | Theme and language preference (absent = auto / English) |
+| `swiss_code`, `swiss_scale` | Code colour scheme (§panel.code) and interface size (§panel.scale); absent = auto / 100 % |
 | `swiss.lastPage` | `{pluginId: pageId}` — the last page per plugin (§panel.nav) |
 | `swiss.rail.pinned` | The rail's pinned plugin list |
 | `swiss.tokenId` | Which token the copied connect commands embed |

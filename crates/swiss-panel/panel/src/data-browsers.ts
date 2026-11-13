@@ -37,6 +37,7 @@ import { tk, tr, trn } from "./i18n.js";
 import { btn } from "./ui/button.js";
 import { popupMenu } from "./ui/menu.js";
 import { openFieldSheet } from "./ui/sheet.js";
+import { scaled } from "./ui/ui-scale.js";
 
 /* --- redis key browser -------------------------------------------------------------------------- */
 /* A redis connection in the picker swaps the table list for a SCAN-paged key list, and the
@@ -658,13 +659,14 @@ function dbRedisCellEdit(td: HTMLElement, insertIdx: number, addr: string, col: 
   ta.value = current;
   ta.style.left = (rect.left - wrapRect.left + wrap.scrollLeft) + "px";
   ta.style.top = (rect.top - wrapRect.top + wrap.scrollTop) + "px";
-  ta.style.width = Math.max(rect.width + 24, 96) + "px";
-  ta.style.minHeight = Math.max(rect.height, 22) + "px";
+  // The editor's floors and cap are px at 100%, at the interface size in force (SPEC §panel.scale).
+  ta.style.width = Math.max(rect.width + scaled(24), scaled(96)) + "px";
+  ta.style.minHeight = Math.max(rect.height, scaled(22)) + "px";
   wrap.appendChild(ta);
   dbRedisEditor = { ta: ta, save: save };
   function autoSize(): void {
     ta.style.height = "auto";
-    ta.style.height = Math.min(Math.max(ta.scrollHeight, 22), 320) + "px";
+    ta.style.height = Math.min(Math.max(ta.scrollHeight, scaled(22)), scaled(320)) + "px";
   }
   function save(): void {
     const raw = ta.value;

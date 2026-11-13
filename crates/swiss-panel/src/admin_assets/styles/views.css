@@ -62,27 +62,27 @@
     .hist-wrap { flex: none; }
     button.hist-sel {
       font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-2);
-      padding: 4px var(--s3); border: 0; border-radius: var(--r-btn);
+      padding: calc(4px * var(--ui-scale)) var(--s3); border: 0; border-radius: var(--r-btn);
       background-color: var(--card); box-shadow: inset 0 0 0 1px var(--sep);
       cursor: pointer; transition: background-color .12s ease; white-space: nowrap;
     }
     button.hist-sel:hover, button.hist-sel[aria-expanded="true"] { background-color: var(--hover); color: var(--text); }
-    button.hist-sel:focus { box-shadow: inset 0 0 0 1px var(--sep), 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+    button.hist-sel:focus { box-shadow: inset 0 0 0 1px var(--sep), 0 0 0 calc(3px * var(--ui-scale)) color-mix(in srgb, var(--accent) 18%, transparent); }
     .hist-pop {
       position: fixed; z-index: 45; /* above the overflow menu (30) and sheet backdrop */
-      display: flex; width: min(780px, 92vw); max-height: 340px;
+      display: flex; width: min(calc(780px * var(--ui-scale)), 92vw); max-height: calc(340px * var(--ui-scale));
       background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-row);
       box-shadow: var(--shadow-pop); overflow: hidden;
     }
     /* The left pane's column: the filter box rides pinned above the rows it narrows, so it never
        scrolls away with them. Layout only — the input itself wears the panel-wide control styles. */
-    .hist-side { flex: none; width: 300px; display: flex; flex-direction: column; border-right: 1px solid var(--sep); }
+    .hist-side { flex: none; width: calc(300px * var(--ui-scale)); display: flex; flex-direction: column; border-right: 1px solid var(--sep); }
     .hist-search { flex: none; padding: var(--s1) var(--s1) 0; }
     .hist-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--s1); }
     .hist-row {
       display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
       font-family: var(--mono); font-size: var(--f-label); color: var(--text-2);
-      padding: 5px var(--s2); border-radius: 6px;
+      padding: calc(5px * var(--ui-scale)) var(--s2); border-radius: calc(6px * var(--ui-scale));
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .hist-row:hover, .hist-row:focus { background: var(--hover); color: var(--text); outline: none; }
@@ -92,7 +92,7 @@
        invent a third way to show a request/reply pair. */
     .hist-view .vblock + .vblock { margin-top: var(--s3); }
     /* The popover is a peek: each block scrolls inside it rather than growing the pane. */
-    .hist-view .vblock > pre { max-height: 176px; overflow: auto; }
+    .hist-view .vblock > pre { max-height: calc(176px * var(--ui-scale)); overflow: auto; }
     /* The run's identity line: the same status dot every list in the panel uses, then when/how/
        duration in tabular numerals, separated from the content by a hairline. */
     .hist-head {
@@ -116,23 +116,23 @@
        what is left here is the one thing a forward row draws that the library does not. */
     /* An MCP the tunnel serves, with the MCP's own health dot: a red MCP beside a green tunnel says
        "the tunnel is fine, the database is not". */
-    .serves { display: inline-flex; align-items: center; gap: 4px; font-family: var(--sans); }
+    .serves { display: inline-flex; align-items: center; gap: calc(4px * var(--ui-scale)); font-family: var(--sans); }
 
     .serves.unknown { color: var(--text-3); text-decoration: line-through; }
-    .keylist { display: grid; gap: 2px; max-height: 210px; overflow-y: auto; }
-    .keylist button { text-align: left; font-family: var(--mono); font-size: var(--f-label); padding: 4px var(--s2); border-radius: 6px;
-      --ic: 14px; --ic-ink: var(--text-3); } /* folder/file rows */
+    .keylist { display: grid; gap: 2px; max-height: calc(210px * var(--ui-scale)); overflow-y: auto; }
+    .keylist button { text-align: left; font-family: var(--mono); font-size: var(--f-label); padding: calc(4px * var(--ui-scale)) var(--s2); border-radius: calc(6px * var(--ui-scale));
+      --ic: calc(14px * var(--ui-scale)); --ic-ink: var(--text-3); } /* folder/file rows */
     .keylist button:hover { background: var(--hover); }
-    .mcp-picks { display: grid; gap: var(--s1); max-height: 168px; overflow-y: auto; padding: var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: 8px; }
+    .mcp-picks { display: grid; gap: var(--s1); max-height: calc(168px * var(--ui-scale)); overflow-y: auto; padding: var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: calc(8px * var(--ui-scale)); }
 
     /* --- data view (the DBeaver-style browser; SPEC §data.tabs, §data.grid) ---------------------- */
     .pane > .db-root { max-width: none; }
     /* The workspace shares the shell canvas and sidebar surfaces (SPEC §panel.nav). */
     .pane.db-host > .db-root { flex: 1; min-height: 0; }
-    .db-root { display: flex; height: 100%; min-height: 420px; }
-    .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
+    .db-root { display: flex; height: 100%; min-height: calc(420px * var(--ui-scale)); }
+    .db-side { width: calc(250px * var(--ui-scale)); flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
     /* Connection and database pickers share the shell row geometry (SPEC §data.databases). */
-    .db-conn-row, .db-db-row { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
+    .db-conn-row, .db-db-row { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: calc(5px * var(--ui-scale)) var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-conn-row:hover, .db-db-row:hover { background: var(--hover); }
     .db-conn-row.off { cursor: default; color: var(--text-3); }
     /* The open picker's row stays engaged: the hover wash holds while its drawer is open,
@@ -146,10 +146,10 @@
     .db-drawer { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .18s ease; }
     .db-drawer.open { grid-template-rows: 1fr; }
     .db-drawer-in { min-height: 0; overflow: hidden auto; max-height: 40vh; overscroll-behavior: contain; }
-    .db-drawer-head { padding: 5px 10px 2px; font-size: var(--f-caption); color: var(--text-3); white-space: nowrap; }
-    .db-drawer hr { border: 0; border-top: 1px solid var(--sep); margin: 3px 6px; }
-    .db-drow { display: flex; align-items: center; gap: 7px; margin: 0 4px; width: calc(100% - 8px);
-      padding: 4px 6px; border-radius: 6px; text-align: left; font-size: var(--f-body); color: var(--text-2);
+    .db-drawer-head { padding: calc(5px * var(--ui-scale)) calc(10px * var(--ui-scale)) 2px; font-size: var(--f-caption); color: var(--text-3); white-space: nowrap; }
+    .db-drawer hr { border: 0; border-top: 1px solid var(--sep); margin: calc(3px * var(--ui-scale)) calc(6px * var(--ui-scale)); }
+    .db-drow { display: flex; align-items: center; gap: calc(7px * var(--ui-scale)); margin: 0 calc(4px * var(--ui-scale)); width: calc(100% - calc(8px * var(--ui-scale)));
+      padding: calc(4px * var(--ui-scale)) calc(6px * var(--ui-scale)); border-radius: calc(6px * var(--ui-scale)); text-align: left; font-size: var(--f-body); color: var(--text-2);
       --ic: var(--ic-m); --ic-ink: var(--text-3); }
     .db-drow:hover { background: var(--hover); }
     /* The current pick is a tick in a column every row keeps (SPEC §panel.pages, rule 15; the
@@ -159,7 +159,7 @@
     .db-drow-tick { flex: none; display: inline-flex; width: var(--ic-m); --ic-ink: var(--accent); }
     .db-drow-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-drow-meta { flex: none; color: var(--text-3); font-size: var(--f-caption); font-variant-numeric: tabular-nums; }
-    .db-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+    .db-dot { width: calc(7px * var(--ui-scale)); height: calc(7px * var(--ui-scale)); border-radius: 50%; background: var(--accent); flex: none; }
     .db-dot.off { background: var(--text-3); }
     /* A dialect GLYPH carries no pill - the MCP sidebar's side-type vocabulary (SPEC §mcp.panel): a
        mark is quiet grey and brightens with the row. A word (a dialect outside the icon
@@ -173,7 +173,7 @@
        editability, connection), a sibling of the commit bar (.db-bar), not part of it.
        Caption ink and the same row height as the console's hint row; the connection name
        rides the right edge in --text-3, the note keeps body ink. */
-    .db-status { display: flex; align-items: center; gap: var(--s2); padding: 3px var(--s2) 6px; min-height: 26px; }
+    .db-status { display: flex; align-items: center; gap: var(--s2); padding: calc(3px * var(--ui-scale)) var(--s2) calc(6px * var(--ui-scale)); min-height: calc(26px * var(--ui-scale)); }
     .db-status .db-pageinfo { color: var(--text-3); font-size: var(--f-caption); }
     .db-status-note { font-size: var(--f-caption); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-status-conn { flex: none; font-size: var(--f-caption); color: var(--text-3); }
@@ -185,7 +185,7 @@
        row's whole meta line (type · rows · size) moved into the title, one hover away, where
        it cannot truncate the name to show itself. Rows sit INSIDE band bodies, so the flex
        metrics match .side-row's geometry (base.css) rather than inventing a second one. */
-    .db-table { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
+    .db-table { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: calc(4px * var(--ui-scale)) var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-table:hover { background: var(--hover); }
     /* Selection is the source list's (SPEC §panel.pages, rule 15; base.css .side-row): a 2px accent
        bar on the leading edge over an 8% tint, the name in the row's own ink at --w-emph.
@@ -203,7 +203,7 @@
     /* A section's expander/collapse note row — same geometry as a .db-table
        (it sits inside the band body under the last row), but quiet: caption color, accent on
        hover, no meta slot. It is an affordance, not an object. */
-    .db-tree-cap { display: flex; align-items: center; width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; cursor: pointer; }
+    .db-tree-cap { display: flex; align-items: center; width: 100%; min-width: 0; text-align: left; padding: calc(4px * var(--ui-scale)) var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; cursor: pointer; }
     .db-tree-cap .db-table-name { flex: 1; font-size: var(--f-caption); color: var(--text-3); }
     .db-tree-cap:hover .db-table-name { color: var(--accent); }
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
@@ -227,15 +227,15 @@
     .db-tabstrip-end { flex: none; display: flex; align-items: stretch; border-left: 1px solid var(--sep); }
     /* The tabs themselves are the library's objTab (ui.css .otab, SPEC §panel.pages). The rename input (the card right-click): sized to the card's own name slot so the
        card does not change shape while it is being edited. */
-    .db-tab-rename { flex: 1; min-width: 0; width: 9em; height: 18px; padding: 0 3px;
+    .db-tab-rename { flex: 1; min-width: 0; width: 9em; height: calc(18px * var(--ui-scale)); padding: 0 calc(3px * var(--ui-scale));
       font: inherit; font-size: var(--f-caption); color: var(--text); background: var(--bg);
-      border: 1px solid var(--accent); border-radius: 4px; outline: none; }
-    .db-tab-add, .db-tab-more { flex: none; display: inline-flex; align-items: center; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; --ic: 14px; }
-    .db-tab-add { gap: 4px; padding: 0 var(--s2); font-size: var(--f-label); }
+      border: 1px solid var(--accent); border-radius: calc(4px * var(--ui-scale)); outline: none; }
+    .db-tab-add, .db-tab-more { flex: none; display: inline-flex; align-items: center; height: calc(32px * var(--ui-scale)); border: none; background: none; color: var(--text-3); cursor: pointer; --ic: calc(14px * var(--ui-scale)); }
+    .db-tab-add { gap: calc(4px * var(--ui-scale)); padding: 0 var(--s2); font-size: var(--f-label); }
     .db-tab-add:hover, .db-tab-more:hover { background: var(--hover); color: var(--text); }
     /* The overflow seat (SPEC §data.tabs): one glyph, one job — "the whole set, listed". Same
        height and hover as the "+" it sits beside, icon-only because its title says the rest. */
-    .db-tab-more { justify-content: center; width: 28px; }
+    .db-tab-more { justify-content: center; width: calc(28px * var(--ui-scale)); }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
     .db-head-left { flex: 1 1 14em; min-width: 0; }
     .db-head-left > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -249,8 +249,8 @@
        dropdown style, so every dropdown reads as one control family. Never restyle selects locally.
        The .dd rules mirror the select ones: the custom trigger carries the select's classes. */
     /* The pick rides the select AND its .dd trigger: ui/select.ts carries ownClasses over. */
-    .db-fsel { width: auto; min-width: 96px; padding-top: 2px; padding-bottom: 2px; }
-    .db-filter input { width: 150px; padding-top: 2px; padding-bottom: 2px; }
+    .db-fsel { width: auto; min-width: calc(96px * var(--ui-scale)); padding-top: 2px; padding-bottom: 2px; }
+    .db-filter input { width: calc(150px * var(--ui-scale)); padding-top: 2px; padding-bottom: 2px; }
     .db-filter .db-act { font-size: var(--f-body); }
     .db-filter-hint { font-size: var(--f-caption); color: var(--text-3); margin-left: var(--s2); }
     /* The results' bar (SPEC §data.console): tabs scrolling sideways, facts at the right. */
@@ -280,10 +280,10 @@
     .db-detail-meta { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
     .db-ttl { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; border-bottom: 1px dashed var(--sep); }
     .db-ttl:hover { color: var(--text); border-bottom-color: var(--accent); }
-    .db-ttl-in { width: 72px; padding: 0 3px; font: inherit; font-variant-numeric: tabular-nums; }
+    .db-ttl-in { width: calc(72px * var(--ui-scale)); padding: 0 calc(3px * var(--ui-scale)); font: inherit; font-variant-numeric: tabular-nums; }
     .db-redis-str-row { display: flex; gap: var(--s2); align-items: flex-end; padding: var(--s2); }
-    .db-redis-str { flex: 1; min-height: 96px; resize: vertical; font-family: var(--mono); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row); color: var(--text); }
-    .db-redis-str:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    .db-redis-str { flex: 1; min-height: calc(96px * var(--ui-scale)); resize: vertical; font-family: var(--mono); font-size: var(--f-label); line-height: 1.55; padding: calc(6px * var(--ui-scale)) var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row); color: var(--text); }
+    .db-redis-str:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 calc(3px * var(--ui-scale)) color-mix(in srgb, var(--accent) 25%, transparent); }
     /* SPEC §data.activity — the Activity page. The head sits in a row with the pane's ⋯; the sessions
        table reuses .db-grid as-is. The panel's own row is marked, a blocked wait reads amber
        (state, not danger), and the row ⋯ matches the rowctl control the grid already uses. */
@@ -296,41 +296,41 @@
     /* SPEC §data.completion — the console's completion list. Same popup vocabulary as .menu (card,
        shadow-pop, hover); labels are identifiers you would type, so they sit in mono. The
        mirror borrows .db-sql-face above to inherit the textarea's exact metrics. */
-    .db-suggest { position: absolute; z-index: 35; min-width: 200px; max-width: 360px; background: var(--card); border-radius: var(--r-row); box-shadow: var(--shadow-pop); padding: 3px; }
-    .db-suggest-item { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); padding: 3px var(--s2); border-radius: 6px; cursor: pointer; }
+    .db-suggest { position: absolute; z-index: 35; min-width: calc(200px * var(--ui-scale)); max-width: calc(360px * var(--ui-scale)); background: var(--card); border-radius: var(--r-row); box-shadow: var(--shadow-pop); padding: calc(3px * var(--ui-scale)); }
+    .db-suggest-item { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); padding: calc(3px * var(--ui-scale)) var(--s2); border-radius: calc(6px * var(--ui-scale)); cursor: pointer; }
     .db-suggest-item:hover, .db-suggest-item.sel { background: var(--hover); }
     .db-suggest-label { font-family: var(--mono); font-size: var(--f-label); color: var(--text); }
     .db-suggest-kind { color: var(--text-3); font-size: var(--f-caption); flex: none; }
     .db-sql-mirror { position: absolute; inset: 0; visibility: hidden; pointer-events: none; overflow: hidden; }
     .db-pagesize { width: auto; }
-    .db-csel { width: auto; min-width: 110px; }   /* the CSV mapping picks, select and trigger alike */
+    .db-csel { width: auto; min-width: calc(110px * var(--ui-scale)); }   /* the CSV mapping picks, select and trigger alike */
     .db-pageinfo { font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
     /* Highlighting. The console and the cell editor are a transparent textarea over a highlighted
        <pre>: both wear .db-sql-face, so every metric (the scrollbar's gutter too) matches. */
     .db-sql-wrap { position: relative; flex: 1; min-height: 0; background: var(--code-bg); border: 1px solid var(--sep); border-radius: var(--r-row); transition: border-color .12s ease, box-shadow .12s ease; }
-    .db-sql-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
-    .db-sql-face { font-family: var(--code-font); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; margin: 0; border: 0; tab-size: 2; scrollbar-gutter: stable; }
+    .db-sql-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 calc(3px * var(--ui-scale)) color-mix(in srgb, var(--accent) 18%, transparent); }
+    .db-sql-face { font-family: var(--code-font); font-size: var(--f-label); line-height: 1.55; padding: calc(6px * var(--ui-scale)) var(--s2); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; margin: 0; border: 0; tab-size: 2; scrollbar-gutter: stable; }
     #dbSql { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; }
     :is(#dbSql, #dbCellText) { background: transparent; color: transparent; caret-color: var(--code-caret); outline: none; }
     :is(#dbSql, #dbCellText)::selection { background: var(--code-sel); }
     .db-sql-hl { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--code-fg); }
     .db-console { display: flex; flex-direction: column; }
     .db-console-row { display: flex; align-items: center; gap: var(--s2); }
-    .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; overflow-anchor: none; position: relative; }
+    .db-grid-wrap { flex: 1; overflow: auto; min-height: calc(200px * var(--ui-scale)); overflow-anchor: none; position: relative; }
     /* Keep the vertical track below the sticky header. */
     .db-grid-wrap::-webkit-scrollbar-track:vertical { margin-top: var(--db-head-h, 0px); }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
     /* Rows only (SPEC §panel.design): the columns read by alignment, no hairline between cells;
        a body row is 4px taller than the header, for air around its lines. */
-    .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); padding: var(--s1) var(--s2); white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
-    .db-grid td { padding-top: 6px; padding-bottom: 6px; }
+    .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); padding: var(--s1) var(--s2); white-space: nowrap; max-width: calc(240px * var(--ui-scale)); overflow: hidden; text-overflow: ellipsis; }
+    .db-grid td { padding-top: calc(6px * var(--ui-scale)); padding-bottom: calc(6px * var(--ui-scale)); }
     .db-grid thead th { position: sticky; top: 0; --th: color-mix(in srgb, var(--bg) 55%, var(--card)); background: var(--th); z-index: 1; font-weight: var(--w-emph); cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }
     /* --hover is translucent: over the header's colour, or the rows show through. */
     .db-grid thead th:not(.db-rowctl, .db-nosort):hover { background: linear-gradient(var(--hover), var(--hover)) var(--th); }
     /* The select-all corner and a Redis value's columns do not sort. */
     .db-grid thead th:is(.db-rowctl, .db-nosort) { cursor: default; }
-    .db-rowctl { width: 58px; text-align: center; white-space: nowrap; }
-    .db-selbox { accent-color: var(--accent); width: auto; margin: 0 3px 0 0; vertical-align: middle; }
+    .db-rowctl { width: calc(58px * var(--ui-scale)); text-align: center; white-space: nowrap; }
+    .db-selbox { accent-color: var(--accent); width: auto; margin: 0 calc(3px * var(--ui-scale)) 0 0; vertical-align: middle; }
     .db-rn { display: inline-block; min-width: 3ch; text-align: right; }
     /* A box starts its cell, as the header's does (centred, it moved with the number). */
     .db-grid td.db-rowctl:has(> .db-selbox:first-child) { text-align: left; }
@@ -342,13 +342,13 @@
        grey (SPEC §panel.pages, rule 2: a comment describes, it reports no state). */
     .db-col-main { display: flex; align-items: center; min-width: 0; }
     .db-col-name { overflow: hidden; text-overflow: ellipsis; }
-    .db-col-comment { font-size: var(--f-caption); font-weight: var(--w-body); color: var(--text-2); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+    .db-col-comment { font-size: var(--f-caption); font-weight: var(--w-body); color: var(--text-2); margin-top: 2px; max-width: calc(320px * var(--ui-scale)); overflow: hidden; text-overflow: ellipsis; }
     .db-col-comment:empty::before { content: "\a0"; } /* holds its line: names align */
-    .db-key { color: var(--amber); margin-left: 4px; --ic: 12px; } /* the i-key sprite, sized to the marker it replaced */
-    .db-col-type { color: var(--text-3); font-size: var(--f-caption); font-weight: var(--w-body); font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+    .db-key { color: var(--amber); margin-left: calc(4px * var(--ui-scale)); --ic: calc(12px * var(--ui-scale)); } /* the i-key sprite, sized to the marker it replaced */
+    .db-col-type { color: var(--text-3); font-size: var(--f-caption); font-weight: var(--w-body); font-family: var(--mono); max-width: calc(320px * var(--ui-scale)); overflow: hidden; text-overflow: ellipsis; }
     /* The FK column's jump: a quiet straight arrow after the name (the chevron is
        pagination's), accent under the pointer; its click never sorts. */
-    .db-col-fk { border: 0; background: none; padding: 0; margin-left: 5px; color: var(--text-3); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; --ic: 13px; }
+    .db-col-fk { border: 0; background: none; padding: 0; margin-left: calc(5px * var(--ui-scale)); color: var(--text-3); cursor: pointer; border-radius: calc(4px * var(--ui-scale)); display: inline-flex; align-items: center; --ic: calc(13px * var(--ui-scale)); }
     .db-col-fk:hover { color: var(--accent); }
     /* The FK tab's referenced-table name: a link in the table's mono face (a name you would
        type), underlined on hover like every link the panel draws. */
@@ -359,14 +359,14 @@
        and a hairline chevron, the same arrow the panel's dropdown triggers use. */
     .db-grid thead th.db-sorted { background: color-mix(in srgb, var(--accent) 6%, var(--card)); }
     .db-grid thead th.db-sorted:hover { background: color-mix(in srgb, var(--accent) 11%, var(--card)); }
-    .db-sort { flex: none; width: 7px; height: 7px; margin-left: 5px;
+    .db-sort { flex: none; width: calc(7px * var(--ui-scale)); height: calc(7px * var(--ui-scale)); margin-left: calc(5px * var(--ui-scale));
       border-right: 1.5px solid var(--accent); border-bottom: 1.5px solid var(--accent);
       transform: rotate(225deg); }
     .db-sorted-desc .db-sort { transform: rotate(45deg); }
     /* The resize grip (SPEC §data.grid): 4px of the header's right edge, accent under the
        pointer; the sticky header is the box it anchors to. A column the finder went to is
        underlined a moment (SPEC §data.console). */
-    .db-col-grip { position: absolute; top: 0; right: 0; bottom: 0; width: 4px; cursor: col-resize; }
+    .db-col-grip { position: absolute; top: 0; right: 0; bottom: 0; width: calc(4px * var(--ui-scale)); cursor: col-resize; }
     .db-grid thead th.db-hit { border-bottom-color: var(--accent); box-shadow: inset 0 -1px var(--accent); }
     /* The keyboard's focus carrier (SPEC §data.grid): zero size so it never paints, focusable so
        keys land somewhere stable. It lives inside the wrap so focusing it cannot scroll the
@@ -381,15 +381,15 @@
     .db-grid td.db-grid-hiddenall { padding: var(--s3); }
     .db-grid td.db-grid-hiddenall > div { display: flex; align-items: center; gap: var(--s2); color: var(--text-3); }
     /* The column-header hover card: the panel's own chrome instead of the OS tooltip. */
-    .db-tip { position: fixed; z-index: 60; max-width: 340px; padding: 7px 10px 8px;
+    .db-tip { position: fixed; z-index: 60; max-width: calc(340px * var(--ui-scale)); padding: calc(7px * var(--ui-scale)) calc(10px * var(--ui-scale)) calc(8px * var(--ui-scale));
       background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-row);
       box-shadow: var(--shadow-pop); font-size: var(--f-label); color: var(--text-2);
       pointer-events: none; }
     .db-tip .t-name { font-size: var(--f-body); font-weight: var(--w-title); color: var(--text); }
     .db-tip .t-type { font-family: var(--mono); font-size: var(--f-caption); margin-top: 2px; }
-    .db-tip .t-comment { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--sep-soft);
+    .db-tip .t-comment { margin-top: calc(5px * var(--ui-scale)); padding-top: calc(5px * var(--ui-scale)); border-top: 1px solid var(--sep-soft);
       color: var(--text-2); line-height: 1.45; white-space: normal; word-break: break-word; }
-    .db-tip .t-hint { margin-top: 5px; font-size: var(--f-caption); color: var(--text-3); }
+    .db-tip .t-hint { margin-top: calc(5px * var(--ui-scale)); font-size: var(--f-caption); color: var(--text-3); }
     .db-null { color: var(--text-3); font-style: italic; }
     .db-cell { font-family: var(--mono); }
     /* Typed cells. Numbers right-align in tabular figures so a column of ids
@@ -410,15 +410,15 @@
     .db-inline-edit {
       position: absolute; z-index: 20;
       font-family: var(--mono); font-size: var(--f-label);
-      padding: 2px 4px; margin: 0; border: 1px solid var(--accent);
-      border-radius: 4px; background: var(--card); color: var(--text);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-      min-width: 80px; width: max-content; max-width: 420px;
+      padding: 2px calc(4px * var(--ui-scale)); margin: 0; border: 1px solid var(--accent);
+      border-radius: calc(4px * var(--ui-scale)); background: var(--card); color: var(--text);
+      box-shadow: 0 0 0 calc(3px * var(--ui-scale)) color-mix(in srgb, var(--accent) 18%, transparent);
+      min-width: calc(80px * var(--ui-scale)); width: max-content; max-width: calc(420px * var(--ui-scale));
       white-space: pre-wrap; word-break: break-all; resize: none; overflow: hidden;
       outline: none;
     }
-    #dbCellText { position: relative; min-height: 180px; }   /* in flow: it sizes the wrap, over the <pre> */
-    #dbCellText.json { min-height: 260px; }
+    #dbCellText { position: relative; min-height: calc(180px * var(--ui-scale)); }   /* in flow: it sizes the wrap, over the <pre> */
+    #dbCellText.json { min-height: calc(260px * var(--ui-scale)); }
     /* The value sheet's read-only body. The content sits on the quiet inset
        ground (the same surface .db-ddl uses); values are values you would copy, so mono
        (base rule 1). A JSON value is the library's code block (pre.jv), scrolled here. */
@@ -433,14 +433,14 @@
        stepper plus the record's own actions on the right. */
     .db-form-head { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-form-pos { font-size: var(--f-label); color: var(--text-2); font-variant-numeric: tabular-nums; }
-    .db-form { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; align-items: start; }
+    .db-form { display: grid; grid-template-columns: minmax(calc(140px * var(--ui-scale)), calc(220px * var(--ui-scale))) 1fr; align-items: start; }
     .db-form-row { display: contents; }
     .db-form-label { padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-form-name { font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-2); }
     .db-form-val { padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; font-family: var(--mono); font-size: var(--f-label); min-width: 0; }
     .db-form-val.db-dirty { background: color-mix(in srgb, var(--amber) 12%, transparent); }
-    .db-form-input { flex: 1 1 160px; min-width: 0; font-family: var(--mono); font-size: var(--f-label); padding: 2px 6px; }
-    .db-form-long { flex: 1 1 160px; min-width: 0; max-height: 140px; overflow: auto; white-space: pre-wrap; word-break: break-word; cursor: pointer; }
+    .db-form-input { flex: 1 1 calc(160px * var(--ui-scale)); min-width: 0; font-family: var(--mono); font-size: var(--f-label); padding: 2px calc(6px * var(--ui-scale)); }
+    .db-form-long { flex: 1 1 calc(160px * var(--ui-scale)); min-width: 0; max-height: calc(140px * var(--ui-scale)); overflow: auto; white-space: pre-wrap; word-break: break-word; cursor: pointer; }
     .db-form-text { min-width: 0; white-space: pre-wrap; word-break: break-word; }
     .db-dirty { background: color-mix(in srgb, var(--amber) 16%, transparent); }
     .db-del td { text-decoration: line-through; color: var(--text-3); background: color-mix(in srgb, var(--red) 7%, transparent); }
@@ -453,8 +453,8 @@
        refused it because the row moved under it. */
     .db-dirty.db-conflict { background: color-mix(in srgb, var(--red) 16%, transparent); }
     tr.db-sel td.db-conflict { background: color-mix(in srgb, var(--red) 26%, transparent); }
-    .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 4px; border-radius: 4px;
-      --ic: 13px; } /* the row controls' sprites */
+    .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 calc(4px * var(--ui-scale)); border-radius: calc(4px * var(--ui-scale));
+      --ic: calc(13px * var(--ui-scale)); } /* the row controls' sprites */
     .db-act:hover { color: var(--red); background: var(--hover); }
 
     .db-bar { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); background: color-mix(in srgb, var(--amber) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--sep)); border-radius: var(--r-card); font-size: var(--f-body); }
@@ -482,7 +482,7 @@
     .pane.term-host > .term-page { flex: 1; }
     .term-page {
       display: flex; flex-direction: column;
-      min-height: 340px;
+      min-height: calc(340px * var(--ui-scale));
       /* The page's chrome reads the PANEL tokens like everywhere else — they are just
          re-pointed here at --term-* (base.css), the darker register a terminal keeps in
          BOTH themes (SPEC §panel.pages). Every library control on the bar or the foot (objTab,
@@ -503,7 +503,7 @@
       display: flex; align-items: flex-end; gap: var(--s3);
       background: var(--bar); border: 1px solid var(--sep);
       border-radius: var(--r-card) var(--r-card) 0 0;
-      padding: 6px 8px 0; flex: none;
+      padding: calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale)) 0; flex: none;
     }
     .term-tabs {
       display: flex; align-items: flex-end; gap: 2px;
@@ -517,14 +517,14 @@
     /* The picker row. The target select wears the panel's own dropdown face
        (initSelects, ui/select.ts) — on this page's re-pointed tokens it already belongs
        to the dark bar, so the old page-styled native select is gone (SPEC §panel.pages). */
-    .term-ctl { display: flex; align-items: center; gap: var(--s2); padding: 4px 2px 7px; flex: none; }
+    .term-ctl { display: flex; align-items: center; gap: var(--s2); padding: calc(4px * var(--ui-scale)) 2px calc(7px * var(--ui-scale)); flex: none; }
     /* Focus docks the shell-owned app zone into this declared slot instead of stacking an
        empty shell row above the terminal. The divider keeps app controls distinct from the
        terminal's target/session actions while all of them share one physical toolbar. */
     .term-shell-slot { display: none; }
     .term-shell-slot:not(:empty) {
       display: inline-flex; align-items: center; flex: none;
-      margin-left: auto; padding: 4px 2px 7px var(--s2); border-left: 1px solid var(--sep);
+      margin-left: auto; padding: calc(4px * var(--ui-scale)) 2px calc(7px * var(--ui-scale)) var(--s2); border-left: 1px solid var(--sep);
     }
     .term-shell-slot .app-zone { gap: var(--s1); }
     /* The slot's icon buttons need no restyling since P8-2: the page's re-pointed tokens
@@ -542,16 +542,16 @@
 .term-key-body kbd, .term-keys-hint kbd {
   font-family: var(--mono); font-size: var(--f-caption);
   background: var(--field); border: 1px solid var(--sep); border-bottom-width: 2px;
-  border-radius: var(--r-btn); padding: 1px 5px; white-space: nowrap;
+  border-radius: var(--r-btn); padding: 1px calc(5px * var(--ui-scale)); white-space: nowrap;
 }
 /* The ? sheet's rows: a two-column list, key column right-aligned mono, description
    in body grey - an inset list without the inset, the sheet already is one. */
 .term-key-body { display: grid; gap: 2px; }
 .term-key-cap { font-size: var(--f-caption); font-weight: var(--w-emph); color: var(--text-3);
-  text-transform: uppercase; letter-spacing: 0.4px; margin: 10px 0 4px; }
+  text-transform: uppercase; letter-spacing: 0.4px; margin: calc(10px * var(--ui-scale)) 0 calc(4px * var(--ui-scale)); }
 .term-key-cap:first-child { margin-top: 0; }
-.term-key-row { display: flex; align-items: baseline; gap: 12px; font-size: var(--f-label); }
-.term-key-k { flex: none; min-width: 150px; display: inline-flex; gap: 4px; justify-content: flex-end;
+.term-key-row { display: flex; align-items: baseline; gap: calc(12px * var(--ui-scale)); font-size: var(--f-label); }
+.term-key-k { flex: none; min-width: calc(150px * var(--ui-scale)); display: inline-flex; gap: calc(4px * var(--ui-scale)); justify-content: flex-end;
   color: var(--text); }
 .term-key-row > span:last-child { color: var(--text-2); }
 /* The empty state's teaching line: quieter than the hint above it. */
@@ -573,15 +573,15 @@
       border-top: none; border-bottom: none; border-radius: 0;
       overflow: hidden;
     }
-    .term-holder { position: absolute; inset: 0; padding: 8px 10px; }
+    .term-holder { position: absolute; inset: 0; padding: calc(8px * var(--ui-scale)) calc(10px * var(--ui-scale)); }
     .term-holder[hidden] { display: none; }
     /* The empty state: a ghost prompt, not an apology box. */
-    .term-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--text-3); }
+    .term-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(6px * var(--ui-scale)); color: var(--text-3); }
     .term-empty h2 { font-size: var(--f-body); font-weight: var(--w-emph); color: var(--text); margin: 0; }
     .term-empty p { margin: 0; font-size: var(--f-label); }
-    .term-ghost { font-family: var(--mono); font-size: 28px; color: var(--text-3); display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .term-ghost { font-family: var(--mono); font-size: calc(28px * var(--ui-scale)); color: var(--text-3); display: flex; align-items: center; gap: calc(10px * var(--ui-scale)); margin-bottom: calc(10px * var(--ui-scale)); }
     .term-ghost-dollar { color: var(--green); }
-    .term-ghost-cursor { width: 15px; height: 30px; background: var(--text-3); animation: term-blink 1.1s steps(1) infinite; }
+    .term-ghost-cursor { width: calc(15px * var(--ui-scale)); height: calc(30px * var(--ui-scale)); background: var(--text-3); animation: term-blink 1.1s steps(1) infinite; }
     @keyframes term-blink { 50% { opacity: 0; } }
     /* The status foot: one quiet line INSIDE the instrument — attached / reconnecting /
        the close reason — with a state dot that answers before the words do. */
@@ -591,14 +591,14 @@
        top hairline is not decoration: with the border off, a full screen of text read as
        glued to the status line, the exact seam every tmux bar draws a line on. */
     .term-foot {
-      flex: none; display: flex; align-items: center; gap: 8px;
+      flex: none; display: flex; align-items: center; gap: calc(8px * var(--ui-scale));
       font-family: var(--mono); font-size: var(--f-caption); color: var(--text-2);
       background: var(--bar); border: 1px solid var(--sep);
       border-radius: 0 0 var(--r-card) var(--r-card);
-      padding: 5px 12px; min-height: 26px;
+      padding: calc(5px * var(--ui-scale)) calc(12px * var(--ui-scale)); min-height: calc(26px * var(--ui-scale));
     }
     .term-foot[hidden] { display: flex; }
-    .term-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+    .term-dot { flex: none; width: calc(8px * var(--ui-scale)); height: calc(8px * var(--ui-scale)); border-radius: 50%; background: var(--text-3); }
     .term-dot.ok { background: var(--green); }
     .term-dot.warn { background: var(--amber); }
     .term-dot.bad { background: var(--red); }
@@ -608,8 +608,8 @@
     .term-rename {
       font: inherit; font-size: var(--f-label);
       color: var(--text); background: var(--bg);
-      border: 1px solid var(--accent); border-radius: 4px;
-      padding: 1px 4px; width: 9em; height: 19px; outline: none;
+      border: 1px solid var(--accent); border-radius: calc(4px * var(--ui-scale));
+      padding: 1px calc(4px * var(--ui-scale)); width: 9em; height: calc(19px * var(--ui-scale)); outline: none;
     }
     /* The "N new" chip rides the holder's bottom-right corner, one hop from the
        scrollbar thumb it answers to; its down affordance is the chevron sprite. */
@@ -617,7 +617,7 @@
       position: absolute; right: var(--s3); bottom: var(--s2);
       font-size: var(--f-label); color: var(--text);
       background: var(--bar); border: 1px solid var(--sep); border-radius: var(--r-pill);
-      padding: 3px 10px; cursor: pointer; box-shadow: none; --ic: 12px;
+      padding: calc(3px * var(--ui-scale)) calc(10px * var(--ui-scale)); cursor: pointer; box-shadow: none; --ic: calc(12px * var(--ui-scale));
       z-index: 3; /* over xterm's link layer (inline 2) that took its click; under IME (5) */
     }
     .term-jump:hover { border-color: var(--accent); }
@@ -628,7 +628,7 @@
       font-size: var(--f-label); color: var(--text);
       background: color-mix(in srgb, var(--term-bar) 92%, transparent);
       border: 1px solid var(--sep); border-radius: var(--r-pill);
-      padding: 4px 12px; opacity: 0; transition: opacity .18s ease;
+      padding: calc(4px * var(--ui-scale)) calc(12px * var(--ui-scale)); opacity: 0; transition: opacity .18s ease;
       pointer-events: none; user-select: none;
     }
     .term-overlay.on { opacity: 1; }
@@ -638,19 +638,19 @@
     .term-find {
       display: flex; align-items: center; gap: var(--s2);
       background: var(--bar); border: 1px solid var(--sep); border-top: none;
-      padding: 4px 10px;
+      padding: calc(4px * var(--ui-scale)) calc(10px * var(--ui-scale));
     }
     .term-find[hidden] { display: none; }
     .term-find input {
       font-family: var(--mono); font-size: var(--f-label); color: var(--text);
-      background: var(--bg); border: 1px solid var(--sep); border-radius: 6px;
-      padding: 3px 8px; width: 22em; outline: none;
+      background: var(--bg); border: 1px solid var(--sep); border-radius: calc(6px * var(--ui-scale));
+      padding: calc(3px * var(--ui-scale)) calc(8px * var(--ui-scale)); width: 22em; outline: none;
     }
     .term-find input:focus { border-color: var(--accent); }
     .term-find-count { font-size: var(--f-caption); color: var(--text-3); min-width: 4.5em; }
     .term-find button {
       background: transparent; color: var(--text-3); border: none; box-shadow: none;
-      border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: var(--f-label);
+      border-radius: calc(5px * var(--ui-scale)); padding: 2px calc(8px * var(--ui-scale)); cursor: pointer; font-size: var(--f-label);
     }
     .term-find button:hover { color: var(--text); background: var(--hover); }
     .db-hint { color: var(--text-3); font-size: var(--f-body); padding: var(--s4); }
@@ -667,7 +667,7 @@
        checked box would, without the box. */
     .days { display: flex; gap: var(--s1); }
     .days button {
-      flex: 1; padding: 5px 0; border: 0; border-radius: var(--r-btn); cursor: pointer;
+      flex: 1; padding: calc(5px * var(--ui-scale)) 0; border: 0; border-radius: var(--r-btn); cursor: pointer;
       font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-2); background: var(--sep-soft);
     }
     .days button:hover { color: var(--text); }
@@ -678,9 +678,9 @@
     /* The one-sentence answer. What reads back wrong is wrong - so an unusable schedule shows
        in the error red, and a usable one in the quiet secondary text, never both. */
     .sched-say {
-      margin-top: var(--s1); padding: var(--s2) var(--s3); border-radius: 8px;
+      margin-top: var(--s1); padding: var(--s2) var(--s3); border-radius: calc(8px * var(--ui-scale));
       background: var(--sep-soft); font-size: var(--f-label); color: var(--text-2);
-      min-height: 17px;
+      min-height: calc(17px * var(--ui-scale));
     }
     .sched-say:empty { display: none; }
     .sched-say.bad { color: var(--red); }
@@ -694,7 +694,7 @@
        z-index above floating menus: navigation outranks any menu it might replace. */
     .palette-back { position: fixed; inset: 0; z-index: 46; background: color-mix(in srgb, var(--bg) 45%, transparent); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
     .palette {
-      width: min(440px, calc(100vw - 32px));
+      width: min(calc(440px * var(--ui-scale)), calc(100vw - calc(32px * var(--ui-scale))));
       background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-card);
       box-shadow: var(--shadow-sheet);
       max-height: 64vh; display: flex; flex-direction: column; overflow: hidden;
@@ -708,28 +708,28 @@
     .pal-item { display: flex; align-items: center; gap: var(--s1); }
     .pal-row {
       flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s2);
-      padding: 7px var(--s2); border-radius: var(--r-row); text-align: left;
-      font-size: var(--f-body); color: var(--text); --ic: 15px; --ic-ink: var(--text-2);
+      padding: calc(7px * var(--ui-scale)) var(--s2); border-radius: var(--r-row); text-align: left;
+      font-size: var(--f-body); color: var(--text); --ic: calc(15px * var(--ui-scale)); --ic-ink: var(--text-2);
     }
     .pal-row:hover { background: var(--hover); }
     .pal-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pal-off { color: var(--text-3); }
     .pal-row.off .pal-name { color: var(--text-3); }
-    .pal-pin { flex: none; padding: 6px; border-radius: var(--r-btn); color: var(--text-3); display: inline-flex; --ic: 13px; }
+    .pal-pin { flex: none; padding: calc(6px * var(--ui-scale)); border-radius: var(--r-btn); color: var(--text-3); display: inline-flex; --ic: calc(13px * var(--ui-scale)); }
     .pal-pin:hover { background: var(--hover); color: var(--text-2); }
     /* Pinned is accent, not filled: saturation stays for state (design rule 2). */
     .pal-pin.on { color: var(--accent); }
     .pal-none { padding: var(--s2) var(--s3); font-size: var(--f-label); color: var(--text-3); }
 
-/* Constrain rendered widths without overwriting the sizes kept by the user's grips. */
+/* Cap widths, not the grips' sizes; queries in rem (SPEC §panel.scale). */
 .db-root { position: relative; container-type: inline-size; }
 .db-root > .db-side { max-width: 24%; }
 .db-root > #dbAgent { max-width: 42%; }
-@container (max-width: 1100px) {
+@container (max-width: 68.75rem) {
   .db-main { --db-px: var(--s2); }
   .db-root > .db-side { max-width: 21%; }
   .db-root > #dbAgent { max-width: 40%; }
 }
-@container (max-width: 760px) {
+@container (max-width: 47.5rem) {
   .db-root > #dbAgent { position: absolute; inset: 0 0 0 auto; max-width: calc(100% - var(--s4)); border-left: 1px solid var(--sep); z-index: 4; }
 }

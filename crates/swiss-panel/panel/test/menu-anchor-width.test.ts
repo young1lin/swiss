@@ -90,12 +90,12 @@ describe("popupMenu's anchor-width floor", () => {
   it("a row's width becomes the menu's floor - never narrower than what opened it", () => {
     menu.popupMenu({ left: 64, top: 90, bottom: 110, width: 233 }, [{ label: "mysql", fn: () => {} }]);
     // 233 > 160, so the anchor decides: the menu is at least as wide as the sidebar row.
-    expect(menuNode().style.minWidth).toBe("max(160px, 233px)");
+    expect(menuNode().style.minWidth).toBe("max(calc(160px * var(--ui-scale)), 233px)");
   });
 
   it("a small anchor keeps the CSS floor - the stylesheet still decides", () => {
     menu.popupMenu({ left: 900, top: 40, bottom: 62, width: 22 }, [{ label: "Refresh", fn: () => {} }]);
-    expect(menuNode().style.minWidth).toBe("max(160px, 22px)");
+    expect(menuNode().style.minWidth).toBe("max(calc(160px * var(--ui-scale)), 22px)");
   });
 
   it("an anchor with no width (the pointer-anchored ctx menus) is untouched", () => {

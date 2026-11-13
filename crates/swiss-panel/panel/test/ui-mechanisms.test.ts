@@ -144,7 +144,7 @@ describe("ui/menu - popupMenu", () => {
 
   it("a menu dropped from a row is never narrower than the row", () => {
     popupMenu({ ...anchor, width: 233 }, [{ label: "mysql", fn: () => {} }]);
-    expect(document.getElementById("menu")!.style.minWidth).toBe("max(160px, 233px)");
+    expect(document.getElementById("menu")!.style.minWidth).toBe("max(calc(160px * var(--ui-scale)), 233px)");
   });
 });
 

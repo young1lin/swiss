@@ -30,6 +30,7 @@ import { busOn } from "./bus/bus.js";
 import { coalescedRead } from "./bus/live.js";
 import { Module, NoticeSchema } from "./bus/pb/swiss/bus/v1/bus_pb.js";
 import { HostSub, PluginsId } from "./bus/pb/swiss/bus/v1/host_pb.js";
+import { uiScale } from "./ui/ui-scale.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
 const legacy                   = [
@@ -148,7 +149,9 @@ function railCaptionSize(seats                                  , ceiling = RAIL
 function fitRailLabels()       {
   const labels = Array.from(document.querySelectorAll             (".rail-btn .rail-label"));
   if (labels.length === 0) return;
-  const ceiling = document.documentElement.hasAttribute("data-desktop") ? 11 : RAIL_CAPTION_CEIL;
+  // The ceiling is --rail-caption's px at 100%; the interface size scales it like the token
+  // (SPEC §panel.scale), and the seat it must fit in grows by the same factor.
+  const ceiling = (document.documentElement.hasAttribute("data-desktop") ? 11 : RAIL_CAPTION_CEIL) * uiScale();
   labels.forEach((el) => { el.style.fontSize = ceiling + "px"; });
   // The seat's content box: its padding is the air (base.css .rail-btn), and the label's
   // max-width is 100% of this same box, so CSS and JS agree on what "fits" means.

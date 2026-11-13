@@ -74,6 +74,7 @@ export { closeSelect, initSelects, selectOpen, styleSelect } from "./select.js";
 export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, proseText, splitJsonBlock, stringLiteral, textNode, tokenCodeNode, tokenSpans, valueBlock } from "./json-view.js";
 export type { CodeToken, Painted } from "./json-view.js";
 export { CODE_SCHEMES, codeSchemeFor } from "./code-scheme.js";
+export { SCALE_KEY, UI_SCALES, applyScale, scalePref, scaleStep, scaled, scaledCss, setScale, uiScale } from "./ui-scale.js";
 export { closeSheet, initSheet, openFieldSheet, sheet, sheetOpen, showSheet, stackSheet } from "./sheet.js";
 export type { FieldSheetSpec, SheetOpts } from "./sheet.js";
 export { toTop } from "./to-top.js";

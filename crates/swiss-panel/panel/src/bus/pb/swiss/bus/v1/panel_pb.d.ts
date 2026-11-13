@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
 export declare const file_swiss_bus_v1_panel: GenFile;
 
 /**
- * A language, theme or code-scheme choice. Unset fields did not change.
+ * A language, theme, code-scheme or interface-size choice. Unset fields did not change.
  *
  * @generated from message swiss.bus.v1.Prefs
  */
@@ -33,6 +33,13 @@ export declare type Prefs = Message<"swiss.bus.v1.Prefs"> & {
    * @generated from field: optional string code_scheme = 3;
    */
   codeScheme?: string | undefined;
+
+  /**
+   * The interface size step, "90" to "175" (SPEC §panel.scale).
+   *
+   * @generated from field: optional string ui_scale = 4;
+   */
+  uiScale?: string | undefined;
 };
 
 /**

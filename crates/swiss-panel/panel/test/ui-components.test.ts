@@ -947,15 +947,15 @@ describe("ui/workspace", () => {
       expect(fixedOf(list).style.width, "the token's width until the reader moves the edge").toBe("");
       // Nothing is laid out here: the measured width is 0, so the arrows start at the minimum.
       key(list.querySelector(".grip"), "ArrowRight");
-      expect(fixedOf(list).style.width).toBe("236px");
+      expect(fixedOf(list).style.width).toBe("calc(236px * var(--ui-scale))");
       expect(JSON.parse(localStorage.getItem("swiss_grip_ws-list") ?? "null")).toEqual({ size: 236, folded: false });
       // Another tab's list paints: the same width, so the edge does not jump between tabs.
-      expect(fixedOf(wsSplit({ fixed: "start", start: "a", end: "b" })).style.width).toBe("236px");
+      expect(fixedOf(wsSplit({ fixed: "start", start: "a", end: "b" })).style.width).toBe("calc(236px * var(--ui-scale))");
       // An inspector at the end is its own width, and the arrow towards the start widens it.
       const insp = wsSplit({ fixed: "end", start: "graph", end: "inspector" });
       expect(fixedOf(insp).style.width).toBe("");
       key(insp.querySelector(".grip"), "ArrowLeft");
-      expect(fixedOf(insp).style.width).toBe("256px");
+      expect(fixedOf(insp).style.width).toBe("calc(256px * var(--ui-scale))");
       expect(localStorage.getItem("swiss_grip_ws-aside")).not.toBeNull();
       // A split that names its own key keeps its own.
       const own = wsSplit({ fixed: "start", start: "a", end: "b", key: "ws-own" });
@@ -972,7 +972,8 @@ describe("ui/workspace", () => {
     const rule = /\.ws-pane\.fixed \{([^}]*)\}/.exec(sheet("ui.css"))?.[1] ?? "";
     expect(rule).toMatch(/flex:\s*none/);
     expect(rule).toContain("max-width: max(50%, calc(100% - var(--ws-rest-min)))");
-    expect(sheet("base.css")).toMatch(/--ws-rest-min:\s*320px/);
+    // The token and wsSplit's WS_REST_MIN are one number, both px at 100% (SPEC §panel.scale).
+    expect(sheet("base.css")).toMatch(/--ws-rest-min:\s*calc\(320px \* var\(--ui-scale\)\)/);
   });
 
   it("wsBar runs along one line, or a line per row; foot is the count under a pane", () => {
@@ -2243,16 +2244,16 @@ describe("ui/grip - grip", () => {
     expect(p.style.width, "the stylesheet's default stands").toBe("");
     // Nothing is laid out here, so the measured width is 0 and the arrows start at the minimum.
     press(g, "ArrowRight");
-    expect(p.style.width).toBe("116px");
+    expect(p.style.width).toBe("calc(116px * var(--ui-scale))");
     expect(stored("t1")).toEqual({ size: 116, folded: false });
     press(g, "End");
-    expect(p.style.width).toBe("400px");
+    expect(p.style.width).toBe("calc(400px * var(--ui-scale))");
     press(g, "Home");
-    expect(p.style.width).toBe("100px");
+    expect(p.style.width).toBe("calc(100px * var(--ui-scale))");
     // The page paints again: the new grip reads the remembered width back.
     const again = pane();
     grip(again, { axis: "x", key: "t1", min: 100, max: 400, label: "Tables" });
-    expect(again.style.width).toBe("100px");
+    expect(again.style.width).toBe("calc(100px * var(--ui-scale))");
     expect(gripState({ axis: "x", key: "t1", min: 100, max: 400, label: "Tables" })).toEqual({ size: 100, folded: false });
   });
 
@@ -2260,7 +2261,7 @@ describe("ui/grip - grip", () => {
     const p = pane();
     const g = grip(p, { axis: "y", key: "t2", size: 220, min: 96, max: () => 500, label: "Console" });
     expect(g.getAttribute("aria-orientation")).toBe("horizontal");
-    expect(p.style.flex).toBe("0 1 220px");
+    expect(p.style.flex).toBe("0 1 calc(220px * var(--ui-scale))");
     let resizes = 0;
     const onResize = (): void => { resizes++; };
     window.addEventListener("resize", onResize);
@@ -2268,11 +2269,11 @@ describe("ui/grip - grip", () => {
       pointer(g, "pointerdown", { y: 300 });
       expect(document.body.dataset.grip).toBe("y");
       pointer(g, "pointermove", { y: 400 });
-      expect(p.style.flex).toBe("0 1 320px");
+      expect(p.style.flex).toBe("0 1 calc(320px * var(--ui-scale))");
       pointer(g, "pointermove", { y: 2000 });
-      expect(p.style.flex, "never past max").toBe("0 1 500px");
+      expect(p.style.flex, "never past max").toBe("0 1 calc(500px * var(--ui-scale))");
       pointer(g, "pointermove", { y: -900 });
-      expect(p.style.flex, "never under min").toBe("0 1 96px");
+      expect(p.style.flex, "never under min").toBe("0 1 calc(96px * var(--ui-scale))");
       expect(resizes, "nothing announced mid-drag").toBe(0);
       pointer(g, "pointerup", { y: -900 });
     } finally { window.removeEventListener("resize", onResize); }
@@ -2281,7 +2282,22 @@ describe("ui/grip - grip", () => {
     expect(stored("t2")).toEqual({ size: 96, folded: false });
     // Without fold a double-click puts the default back.
     g.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    expect(p.style.flex).toBe("0 1 220px");
+    expect(p.style.flex).toBe("0 1 calc(220px * var(--ui-scale))");
+  });
+
+  it("at a larger interface size the size stays px at 100%: the hand's travel and the measured room are divided by the scale (SPEC §panel.scale)", () => {
+    document.documentElement.setAttribute("data-scale", "125");
+    try {
+      const p = pane();
+      const g = grip(p, { axis: "y", key: "t2s", size: 220, min: 96, max: () => 500, label: "Console" });
+      pointer(g, "pointerdown", { y: 300 });
+      pointer(g, "pointermove", { y: 400 });
+      expect(p.style.flex, "100 px on screen is 80 at 100%").toBe("0 1 calc(300px * var(--ui-scale))");
+      pointer(g, "pointermove", { y: 2000 });
+      expect(p.style.flex, "500 px of room on screen is 400 at 100%").toBe("0 1 calc(400px * var(--ui-scale))");
+      pointer(g, "pointerup", { y: 2000 });
+      expect(stored("t2s")).toEqual({ size: 400, folded: false });
+    } finally { document.documentElement.removeAttribute("data-scale"); }
   });
 
   it("a foldable pane folds by double-click, Enter, its chevron or a drag past half its minimum; the folded strip's click brings it back", () => {
@@ -2299,7 +2315,7 @@ describe("ui/grip - grip", () => {
     expect(stored("t3")).toEqual({ size: 200, folded: true });
     g.click();
     expect(p.style.display).toBe("");
-    expect(p.style.width, "the width it had").toBe("200px");
+    expect(p.style.width, "the width it had").toBe("calc(200px * var(--ui-scale))");
     press(g, "Enter");
     expect(g.classList.contains("folded")).toBe(true);
     press(g, "ArrowRight");
@@ -2313,9 +2329,9 @@ describe("ui/grip - grip", () => {
     // and the click the release makes does not unfold it again.
     pointer(g, "pointerdown", { x: 300 });
     pointer(g, "pointermove", { x: 280 });
-    expect(p.style.width).toBe("180px");
+    expect(p.style.width).toBe("calc(180px * var(--ui-scale))");
     pointer(g, "pointermove", { x: 200 });
-    expect(p.style.width).toBe("160px");
+    expect(p.style.width).toBe("calc(160px * var(--ui-scale))");
     pointer(g, "pointermove", { x: 150 });
     expect(p.style.display).toBe("none");
     pointer(g, "pointerup", { x: 150 });
@@ -2325,7 +2341,7 @@ describe("ui/grip - grip", () => {
     expect(stored("t3")).toEqual({ size: 200, folded: true });
     g.click();
     expect(g.classList.contains("folded")).toBe(false);
-    expect(p.style.width).toBe("200px");
+    expect(p.style.width).toBe("calc(200px * var(--ui-scale))");
   });
 
   it("a press on the mid-edge chevron that moves is a drag, not a fold; one that stays is the chevron's click", () => {
@@ -2340,7 +2356,7 @@ describe("ui/grip - grip", () => {
     pointer(g, "pointermove", { x: 360 }); // captured: the edge hears the move wherever it lands
     pointer(g, "pointerup", { x: 360 });
     g.click(); // the release's click lands on the edge that held the pointer
-    expect(p.style.width).toBe("260px");
+    expect(p.style.width).toBe("calc(260px * var(--ui-scale))");
     expect(g.classList.contains("folded")).toBe(false);
     // A press that stays put is the chevron's click, answered at the release; the click after
     // it is the release's own and does not fold it back.
@@ -2368,32 +2384,32 @@ describe("ui/grip - grip", () => {
     gripFold(g, false);
     expect(gripFolded(g)).toBe(false);
     expect(p.style.display).toBe("");
-    expect(p.style.width).toBe("400px");
+    expect(p.style.width).toBe("calc(400px * var(--ui-scale))");
     expect(useHref(g)).toBe("#i-chevron-right");
     expect(stored("t6")).toEqual({ size: 400, folded: false });
     gripFold(g, false);
     expect(gripFolded(g)).toBe(false);
     pointer(g, "pointerdown", { x: 800 });
     pointer(g, "pointermove", { x: 700 });
-    expect(p.style.width, "towards the start widens").toBe("500px");
+    expect(p.style.width, "towards the start widens").toBe("calc(500px * var(--ui-scale))");
     pointer(g, "pointermove", { x: 1000 });
-    expect(p.style.width, "towards the end narrows, down to the minimum").toBe("280px");
+    expect(p.style.width, "towards the end narrows, down to the minimum").toBe("calc(280px * var(--ui-scale))");
     pointer(g, "pointermove", { x: 1100 });
     expect(p.style.display, "past half the minimum it folds").toBe("none");
     pointer(g, "pointermove", { x: 800 });
     pointer(g, "pointerup", { x: 800 });
-    expect(p.style.width).toBe("400px");
+    expect(p.style.width).toBe("calc(400px * var(--ui-scale))");
     press(g, "ArrowLeft");
-    expect(p.style.width).toBe("416px");
+    expect(p.style.width).toBe("calc(416px * var(--ui-scale))");
     press(g, "ArrowRight");
-    expect(p.style.width).toBe("400px");
+    expect(p.style.width).toBe("calc(400px * var(--ui-scale))");
     gripFold(g, true);
     expect(p.style.display).toBe("none");
     // Remembered open, the next paint opens it whatever the default.
     gripFold(g, false);
     const again = pane();
     expect(gripFolded(grip(again, o))).toBe(false);
-    expect(again.style.width).toBe("400px");
+    expect(again.style.width).toBe("calc(400px * var(--ui-scale))");
   });
 
   it("ui.css: a hidden pane takes its edge with it, and a folded edge is a strip that stays", () => {
@@ -3065,7 +3081,7 @@ describe("ui/dock - dock", () => {
     expect(d.edge.getAttribute("aria-label")).toBe("Resize Console");
     expect(d.edge.getAttribute("aria-controls")).toBe("dockTop");
     expect(d.edge.title).toBe("Drag to resize · double-click hides Results or brings it back");
-    expect(d.top.style.flex).toBe("0 1 220px");
+    expect(d.top.style.flex).toBe("0 1 calc(220px * var(--ui-scale))");
     expect([d.fold.getAttribute("aria-label"), useHref(d.fold)]).toEqual(["Hide Results", "#i-chevron-down"]);
     expect([d.max.getAttribute("aria-label"), useHref(d.max)]).toEqual(["Maximize Results", "#i-expand"]);
     expect(d.fold.className, "quiet icons, not a floating handle").toBe("btn icon ghost");
@@ -3078,7 +3094,7 @@ describe("ui/dock - dock", () => {
     expect(build().root.dataset.fold, "a page painting again keeps it").toBe("bottom");
     d.fold.click();
     expect(d.root.dataset.fold).toBeUndefined();
-    expect(d.top.style.flex).toBe("0 1 220px");
+    expect(d.top.style.flex).toBe("0 1 calc(220px * var(--ui-scale))");
     expect(stored("d1"), "the default again: nothing kept").toBeNull();
     // The results take the column: a look, not a layout - the next paint shows the console.
     d.max.click();
@@ -3104,15 +3120,15 @@ describe("ui/dock - dock", () => {
     expect(d.root.dataset.fold, "a tab's double-click is the tab's").toBeUndefined();
     const key = (k: string): void => { d.edge.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); };
     key("ArrowDown");
-    expect(d.top.style.flex).toBe("0 1 236px");
+    expect(d.top.style.flex).toBe("0 1 calc(236px * var(--ui-scale))");
     expect(d.edge.getAttribute("aria-valuenow")).toBe("236");
     key("ArrowUp");
     key("ArrowUp");
-    expect(d.top.style.flex).toBe("0 1 204px");
+    expect(d.top.style.flex).toBe("0 1 calc(204px * var(--ui-scale))");
     key("End");
-    expect(d.top.style.flex, "the column less the room the results keep").toBe("0 1 560px");
+    expect(d.top.style.flex, "the column less the room the results keep").toBe("0 1 calc(560px * var(--ui-scale))");
     key("Home");
-    expect(d.top.style.flex).toBe("0 1 96px");
+    expect(d.top.style.flex).toBe("0 1 calc(96px * var(--ui-scale))");
     key("Enter");
     expect(d.root.dataset.fold).toBe("bottom");
     key("ArrowDown");
@@ -3122,16 +3138,30 @@ describe("ui/dock - dock", () => {
     expect(stored("d1")).toEqual({ size: 96, fold: null });
   });
 
+  it("at a larger interface size the console's size stays px at 100%: the drag and the column's room are divided by the scale (SPEC §panel.scale)", () => {
+    document.documentElement.setAttribute("data-scale", "125");
+    try {
+      const d = build();
+      pointer(d.head, "pointerdown", 300);
+      pointer(d.head, "pointermove", 400);
+      expect(d.top.style.flex, "100 px on screen is 80 at 100%").toBe("0 1 calc(300px * var(--ui-scale))");
+      pointer(d.head, "pointermove", 300 + 300);
+      expect(d.top.style.flex, "760 px on screen is 608 at 100%, less the 200 the results keep").toBe("0 1 calc(408px * var(--ui-scale))");
+      pointer(d.head, "pointerup", 600);
+      expect(stored("d1")).toEqual({ size: 408, fold: null });
+    } finally { document.documentElement.removeAttribute("data-scale"); }
+  });
+
   it("the bar is the handle: a drag sizes the console, past either end folds a pane keeping the size it started from, and a press on a tab stays the tab's", () => {
     const d = build();
     pointer(d.head, "pointerdown", 300);
     expect(document.body.dataset.dock).toBe("");
     pointer(d.head, "pointermove", 302);
-    expect(d.top.style.flex, "a hand's tremble is not a drag").toBe("0 1 220px");
+    expect(d.top.style.flex, "a hand's tremble is not a drag").toBe("0 1 calc(220px * var(--ui-scale))");
     pointer(d.head, "pointermove", 400);
-    expect(d.top.style.flex).toBe("0 1 320px");
+    expect(d.top.style.flex).toBe("0 1 calc(320px * var(--ui-scale))");
     pointer(d.head, "pointermove", 300 + 340);
-    expect(d.top.style.flex, "at the room the results keep it stops").toBe("0 1 560px");
+    expect(d.top.style.flex, "at the room the results keep it stops").toBe("0 1 calc(560px * var(--ui-scale))");
     pointer(d.head, "pointermove", 300 + 441);
     expect(d.root.dataset.fold, "past it by half, the results fold down").toBe("bottom");
     pointer(d.head, "pointerup", 741);
@@ -3142,7 +3172,7 @@ describe("ui/dock - dock", () => {
     pointer(d.edge, "pointermove", 600);
     pointer(d.edge, "pointerup", 600);
     expect(d.root.dataset.fold).toBeUndefined();
-    expect(d.top.style.flex).toBe("0 1 120px");
+    expect(d.top.style.flex).toBe("0 1 calc(120px * var(--ui-scale))");
     // Up below half the console's minimum, the console folds away; a drag from there starts at nothing.
     pointer(d.head, "pointerdown", 500);
     pointer(d.head, "pointermove", 500 - 73);
@@ -3153,13 +3183,13 @@ describe("ui/dock - dock", () => {
     pointer(d.head, "pointermove", 500);
     pointer(d.head, "pointerup", 500);
     expect(d.root.dataset.fold).toBeUndefined();
-    expect(d.top.style.flex).toBe("0 1 100px");
+    expect(d.top.style.flex).toBe("0 1 calc(100px * var(--ui-scale))");
     // A press on a tab is the tab's click.
     const tab = d.bar.querySelector("button")!;
     pointer(tab, "pointerdown", 300);
     pointer(d.head, "pointermove", 400);
     pointer(d.head, "pointerup", 400);
-    expect(d.top.style.flex).toBe("0 1 100px");
+    expect(d.top.style.flex).toBe("0 1 calc(100px * var(--ui-scale))");
     expect(document.body.dataset.dock).toBeUndefined();
   });
 

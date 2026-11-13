@@ -279,7 +279,7 @@ function dbFiltersNodes(): HChild[] {
     return [h("div", { class: "db-filter" },
       h("input", {
         type: "search", placeholder: tr("dataFilters.keyPatternEG"), value: c.grep || "",
-        style: "width:220px", title: tr("dataFilters.scanMatchPatternApplies"), data: { fkey: "" },
+        style: "width:calc(220px * var(--ui-scale))", title: tr("dataFilters.scanMatchPatternApplies"), data: { fkey: "" },
       }),
       // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
       // it, and "" keeps the request byte-identical to the unfiltered one.

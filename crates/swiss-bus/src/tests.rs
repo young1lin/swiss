@@ -348,7 +348,7 @@ async fn a_relay_reaches_other_subscribers_only_and_a_stray_relay_is_refused() {
     let prefs = topic(v1::Module::Panel as u32, PanelSub::Prefs as u32, "");
     subscribe(&mut left, vec![prefs.clone()]).await;
     subscribe(&mut right, vec![prefs]).await;
-    let body = v1::Prefs { lang: Some("zh".to_owned()), theme: None, code_scheme: None }.encode_to_vec();
+    let body = v1::Prefs { lang: Some("zh".to_owned()), theme: None, code_scheme: None, ui_scale: None }.encode_to_vec();
     let seq = left.seq;
     left.seq += 1;
     left.send_bin(frame!(v1::Module::Panel as u32, PanelSub::Prefs as u32, PrefsId::PrefsChanged as u32, Kind::Relay, seq, 0, "", "", body, None)).await;
@@ -675,6 +675,7 @@ fn assert_body(ty: &str, bytes: &[u8], fields: &serde_json::Value, name: &str) {
             assert_eq!(prefs.lang.as_deref(), Some("zh"), "{name}");
             assert!(prefs.theme.is_none(), "{name}");
             assert!(prefs.code_scheme.is_none(), "{name}");
+            assert!(prefs.ui_scale.is_none(), "{name}");
         }
         "Notice" => {
             assert_eq!(v1::Notice::decode(bytes).expect(name), v1::Notice {}, "{name}");
@@ -872,7 +873,7 @@ fn golden_entries() -> Vec<serde_json::Value> {
         ),
         (
             "prefs-relay",
-            frame!(14, 1, 1, Kind::Relay, 2, 0, "", "left", v1::Prefs { lang: Some("zh".to_owned()), theme: None, code_scheme: None }.encode_to_vec(), None),
+            frame!(14, 1, 1, Kind::Relay, 2, 0, "", "left", v1::Prefs { lang: Some("zh".to_owned()), theme: None, code_scheme: None, ui_scale: None }.encode_to_vec(), None),
             serde_json::json!({"bodyType":"Prefs","body":{"lang":"zh"},"origin":"left"}),
         ),
     ];

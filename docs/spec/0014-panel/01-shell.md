@@ -181,6 +181,7 @@ Code blocks take their colours from a scheme of their own under `:root[data-code
 | Code | `--code-font`, `--code-bg`, `--code-fg`, `--code-edge`, `--code-gutter`, `--code-sel`, `--code-caret` and `--syn-kw`, `--syn-str`, `--syn-num`, `--syn-com`, `--syn-fn`, `--syn-key`, `--syn-lit`, `--syn-punct` — one set per code colour scheme (§panel.code) |
 | Terminal | `--term-*`, derived from the panel's colours (§panel.pages) |
 | Measures | `--measure 920`, `--measure-wide 1180` |
+| Scale | `--ui-scale`, the interface size's factor: every length from 3 px up is written `calc(Npx * var(--ui-scale))` (§panel.scale) |
 
 **The rules.** Numbered, and cited as "rule N" in code comments.
 
@@ -267,7 +268,8 @@ Code blocks take their colours from a scheme of their own under `:root[data-code
 a `title`; Enter submits a sheet's primary; arrows move where a list is a listbox.
 
 **Verification.** A visual change is walked on a test instance (§testing.live) in light and
-dark, English and Chinese, at about 1440 px and 960 px — never on the user's instance.
+dark, English and Chinese, at about 1440 px and 960 px, and at a larger interface size
+(§panel.scale) — never on the user's instance.
 
 ## §panel.code — Code blocks and their colour schemes
 
@@ -324,6 +326,44 @@ reads like DataGrip on SQL it has not resolved against a schema.
 - **Numbered lines.** The DDL pane, the DDL sheet's preview and the commit previews number
   their lines (`tokenSpans({ lined })`): one `.jv-line` per line, the number generated content
   in a gutter, so a selection copies the code and never a number.
+
+## §panel.scale — The interface size
+
+A 13-inch screen at 1080p draws the 13 px body type small enough to lean in to. The browser's
+zoom (Ctrl +) is not the answer the panel gives: it zooms every page of the site, and the
+reader should not have to reach for it. The panel has its own size, one factor over
+everything it draws, so type, air, rows and columns grow together and keep their proportions.
+
+- **Steps.** 90, 100 (the default), 110, 125, 150 and 175 %. The header's text-size button
+  (`i-text-size`, beside the code-scheme palette) opens a menu of the steps, the current one
+  checked; a pick applies at once, so the open page is the preview.
+- **Where it lives.** Per browser (`localStorage` `swiss_scale`; absent is 100 %): it
+  describes this screen. A pick follows across the open pages on PANEL.PREFS (`ui_scale`,
+  §panel.i18n). `<html data-scale>` holds the step, set before the first paint by both pages'
+  pre-paint scripts (the gallery takes `?scale=`, which wins); no attribute is 100 %.
+  `styles/base.css` turns the step into the one token, `--ui-scale` (1 in `:root`, one
+  `:root[data-scale="…"]` block per other step), and sets the root font size to
+  `calc(16px * var(--ui-scale))`, so a `rem` follows it.
+- **What grows.** Every length the stylesheets write from 3 px up is written
+  `calc(Npx * var(--ui-scale))`: the type ramp, the spacing steps, radii, icon and row sizes,
+  the measures, the panes' widths. A 1 px or 2 px hairline or focus ring stays as it is, so
+  an edge stays one device line; `--r-pill` stays a pill. `test/ui-scale.test.ts` holds every
+  sheet to it, so a new length is written in the scaled form from its first draft.
+- **Width rules** are container queries on `#app` in `rem` (`@container app (max-width:
+  75rem)`), never px media queries: a media query cannot read a custom property, so at 150 %
+  it would keep the wide layout the window no longer has room for.
+- **Scripts.** A length a script writes goes through `ui/ui-scale.ts`: `scaledCss(n)` for a
+  size that should follow a later change live (a pane's width, an inline style), `scaled(n)`
+  for a bound compared with a measurement (a popover's cap, an inline editor's floor). A grip's
+  or the dock's size is stored in px at 100 % and painted through `scaledCss`; a pointer's
+  travel and a measured room are divided by the factor, so a dragged pane keeps its share of
+  the screen when the size changes. A change dispatches `resize`, so the pages that measure
+  (the terminal, the tab strips, the rail's captions) measure again.
+- **Not scaled.** The terminal's font (its own size, §terminal.panel), the graph's canvas (its
+  own zoom), and a data grid column a reader dragged (stored in screen px).
+- **Not CSS `zoom`.** Zooming `#app` was tried first: in Chrome a zoomed element's measured
+  rects and a fixed layer's coordinates disagree, and `100vh` inside it is zoomed too, so every
+  popover landed off its anchor and the shell overflowed the window.
 
 ## §panel.ui — The UI library
 
