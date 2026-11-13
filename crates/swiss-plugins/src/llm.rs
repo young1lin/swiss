@@ -169,7 +169,7 @@ impl PluginFactory for LlmPlugin {
                                 "systemPrompt": { "type": "string", "maxLength": 20000, "description": "builtin/chat: appended to the built-in default system message, which is always sent. claude/pi: appended to the child's own system prompt." },
                                 "tools": {
                                     "type": "array",
-                                    "description": "builtin: read, write, edit, glob, grep, bash, job_output, job_kill, sync, delegate (write and edit only in the panel's Test). claude: Read, Grep, Glob. pi: read, grep, find, ls. Of the tools a task offers, the ones this agent takes; unset takes them all, [] none. chat takes no tools.",
+                                    "description": "builtin: read, write, edit, glob, grep, bash, job_output, job_kill, sync, delegate (write and edit only in the panel's Test and `swiss agent run`). claude: Read, Grep, Glob. pi: read, grep, find, ls. Of the tools a task offers, the ones this agent takes; unset takes them all, [] none. chat takes no tools.",
                                     "items": { "type": "string" },
                                     "uniqueItems": true
                                 }
