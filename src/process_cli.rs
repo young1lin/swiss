@@ -136,7 +136,7 @@ fn fmt_uptime(sec: u64) -> String {
 
 /// One status line: name, status, pid, ports, uptime, and the reason or the
 /// stranger - the same facts the row shows (SPEC §process.cli).
-fn status_line(app: &Value) -> String {
+pub(crate) fn status_line(app: &Value) -> String {
     let name = app["name"].as_str().unwrap_or("?");
     let status = app["status"].as_str().unwrap_or("?");
     let pid = app["pid"].as_u64().map(|p| p.to_string()).unwrap_or_else(|| "-".into());

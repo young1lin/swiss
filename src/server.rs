@@ -277,6 +277,10 @@ pub async fn run_gateway() -> Result<(), String> {
     // plugin instance that fills the slot share ONE seat.
     let remote_state = swiss_remote::api::RemoteState::new();
 
+    // The lane's slot (SPEC §lane): the same one-slot pattern - the router mounted below and
+    // the plugin instance that fills the slot share ONE seat.
+    let lane_slot = swiss_plugins::lane::LaneSlot::new();
+
     // The /api/process routes' state slot (SPEC §process.apps): the same one-slot
     // pattern a third time - the process plugin (registered with the built-ins, LAST,
     // so it starts FIRST) installs into it, and while it is off every route under
@@ -481,6 +485,12 @@ pub async fn run_gateway() -> Result<(), String> {
         terminal_state.clone(),
     )))
     .expect("the terminal plugin registers");
+    // The lane plugin (SPEC §lane): the machine-wide queue for heavy commands.
+    host.register(Arc::new(swiss_plugins::lane::LanePlugin::new(
+        services.clone(),
+        lane_slot.clone(),
+    )))
+    .expect("the lane plugin registers");
     // The remote plugin (SPEC §remote): the #remote targets page, the /api/remote routes,
     // the actions and the builtin remote MCP (R7) - and deliberately no capability
     // requirement, so the target table stays editable while tunnels is off. The
@@ -568,6 +578,8 @@ pub async fn run_gateway() -> Result<(), String> {
         // routes are owned by the terminal plugin (route_owner prefix /api/terminal),
         // so a disabled plugin answers the structured 503 with no 503 of its own here.
         .merge(swiss_plugins::terminal_api::mount(terminal_state))
+        // Same guard and boundary: the /api/lane tree is owned by the lane plugin.
+        .merge(swiss_plugins::lane::api::mount(lane_slot))
         // Same guard and boundary: the /api/remote tree is owned by the remote plugin
         // (route_owner prefix /api/remote), so a disabled plugin answers the structured
         // 503 here too.

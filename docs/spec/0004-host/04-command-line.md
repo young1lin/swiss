@@ -63,7 +63,7 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   `swiss-remote`), preserving other files and skills, then returns the current inspection
   shape. A copy whose companion is missing or differs is `outdated`. A skill may land
   differently per kind: `swiss-remote`'s claude copy runs its brief as it loads
-  (§remote.project), and the check compares each seat against what that kind gets. Unknown
+  (§remote.project), `swiss-brief`'s runs `swiss brief` (§lane.brief), and the check compares each seat against what that kind gets. Unknown
   targets and extra request fields are refused before filesystem access.
   `POST /api/skills/refresh` is `swiss skill install --installed`: the inspection plus
   `{replaced, failed, skipped}` (`skipped` names a missing seat or an unparseable ledger).
@@ -136,8 +136,8 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   `canApply` is false when `refusal` is `update.devBuild`, `update.bundle`,
   `update.readOnly` or `update.otherExe`. The gateway process does not download or
   replace the binary.
-- **`skill list` / `skill install`** — the embedded `swiss`, `swiss-remote` and `swiss-memory`
-  skills, and which of them land is the user's answer:
+- **`skill list` / `skill install`** — the embedded `swiss`, `swiss-remote`, `swiss-memory` and
+  `swiss-brief` skills, and which of them land is the user's answer:
 
   ```text
   swiss skill list [--json]        one block per seat (kind, directory, env|ledger|both) and each

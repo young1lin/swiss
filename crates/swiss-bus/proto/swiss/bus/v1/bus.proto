@@ -17,6 +17,7 @@ enum Module {
   MODULE_REMOTE = 10;
   MODULE_LLM = 13;
   MODULE_PANEL = 14;
+  MODULE_LANE = 20;
 }
 
 enum Kind {

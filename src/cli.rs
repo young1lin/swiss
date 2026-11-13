@@ -171,6 +171,13 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
   remote …         run commands and move files on SSH targets (swiss remote help)
   run …            a run's status / logs / cancel; `run audit` lists the last 7 days of
                    remote runs - who ran what, where, with what result
+  brief [--json]   what this machine offers an agent - MCP servers, remote targets, managed
+                   apps, tunnels, the heavy-job lane, this directory's memory - each with the
+                   command that uses it
+  lane run [--wait DUR] [--] <program> [args...]
+                   wait for a free slot in the machine-wide lane for heavy work (builds,
+                   test suites), then run the command here with the lane's caps; `lane`
+                   alone shows the queue (swiss lane help)
   api <METHOD> <path> [json | --body-file <path|->]
                    one admin API call, signed with this machine's CLI key (SPEC §host.session) -
                    what a script uses instead of curl; prints the JSON answer. --body-file reads
@@ -1402,6 +1409,10 @@ pub async fn main(argv: Vec<String>) -> i32 {
         Some("memory") => return crate::memory_cli::main(argv[1..].to_vec()).await,
         // `process` carries its own subcommand grammar (SPEC §process.cli).
         Some("process") => return crate::process_cli::main(argv[1..].to_vec()).await,
+        // `lane run` hands everything after its own flags to the command it runs (SPEC §lane.cli).
+        Some("lane") => return crate::lane_cli::main(argv[1..].to_vec()).await,
+        // One read across every module; refuses a flag it does not know (SPEC §lane.brief).
+        Some("brief") => return crate::brief_cli::main(argv[1..].to_vec()).await,
         _ => {}
     }
     run(&argv, &PrintIo, &RealOps).await

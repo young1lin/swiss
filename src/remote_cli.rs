@@ -32,7 +32,7 @@ use serde_json::{json, Value};
 use crate::daemon::{read_gateway_token, resolve_port};
 
 mod brief;
-mod origin;
+pub(crate) mod origin;
 
 /// How long one exec may run unless --timeout, the project binding, or the target
 /// row says otherwise (SPEC §remote.cli: CLI > binding > target > this).

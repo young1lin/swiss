@@ -1,0 +1,17 @@
+// LANE.QUEUE (SPEC §bus.registry, SPEC §lane.panel). Module 20, sub 1.
+// A NOTICE with no key: a command entered the lane, was granted its slot,
+// finished, left, or was released by the page, or the capacity changed. The
+// page re-reads GET /api/lane. A held lease's heartbeat does not publish.
+syntax = "proto3";
+
+package swiss.bus.v1;
+
+enum LaneSub {
+  LANE_SUB_UNSPECIFIED = 0;
+  LANE_SUB_QUEUE = 1;
+}
+
+enum LaneQueueId {
+  LANE_QUEUE_ID_UNSPECIFIED = 0;
+  LANE_QUEUE_CHANGED = 1;
+}
