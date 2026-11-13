@@ -18,10 +18,10 @@
 //! heavy work should go through the lane, which remote targets and tunnels exist, which apps are
 //! managed, or whether this directory has a memory project. Each module answers one of those on
 //! its own route; this reads them all at once and prints each section with the command that
-//! uses it. The swiss-brief skill runs it as it loads.
+//! uses it.
 //!
 //! It is a briefing, not a gate: a gateway that is down, a plugin that is off, or a route that
-//! fails still prints what is known and exits 0, so a skill that runs it never fails to load.
+//! fails still prints what is known and exits 0.
 
 use std::path::Path;
 use std::time::Duration;

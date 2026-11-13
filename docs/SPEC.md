@@ -389,4 +389,4 @@ in §decisions.
 - [§lane.api — Routes](spec/0020-lane.md#laneapi--routes)
 - [§lane.cli — `swiss lane`](spec/0020-lane.md#lanecli--swiss-lane)
 - [§lane.panel — The Lane page](spec/0020-lane.md#lanepanel--the-lane-page)
-- [§lane.brief — `swiss brief` and the `swiss-brief` skill](spec/0020-lane.md#lanebrief--swiss-brief-and-the-swiss-brief-skill)
+- [§lane.brief — `swiss brief`](spec/0020-lane.md#lanebrief--swiss-brief)

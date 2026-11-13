@@ -35,7 +35,6 @@ const SETUP_MD: &str = include_str!("../SETUP.md");
 const REMOTE_SKILL_MD: &str = include_str!("skill_assets/remote/SKILL.md");
 const REMOTE_REFERENCE_MD: &str = include_str!("skill_assets/remote/REFERENCE.md");
 const MEMORY_SKILL_MD: &str = include_str!("skill_assets/memory/SKILL.md");
-const MACHINE_SKILL_MD: &str = include_str!("skill_assets/brief/SKILL.md");
 
 /// The remote skill's step that asks for the brief (SPEC §remote.cli `brief`). Claude Code runs a
 /// `` !`command` `` in a skill as the skill loads, with `$ARGUMENTS` the words that followed its
@@ -46,30 +45,18 @@ const BRIEF_STEP: &str =
 const BRIEF_RAN: &str = "This brief ran as the skill loaded; for another target run `swiss remote brief <target>`.\n\n!`swiss remote brief $ARGUMENTS`";
 const BRIEF_TOOLS: &str = "allowed-tools: Bash(swiss remote brief:*)";
 
-/// The machine skill's step (SPEC §lane.brief): its Claude Code copy opens on `swiss brief`
-/// already run, the same way.
-const MACHINE_STEP: &str =
-    "Run `swiss brief` first: it lists the lane, the MCP servers, the remote targets, the managed\napps, the tunnels and this directory's memory project, each with the command that uses it.";
-const MACHINE_RAN: &str = "This brief ran as the skill loaded; run `swiss brief` again when you need it fresh.\n\n!`swiss brief`";
-const MACHINE_TOOLS: &str = "allowed-tools: Bash(swiss brief:*)";
-
 const SKILL_NAME: &str = "swiss";
 const REMOTE_SKILL_NAME: &str = "swiss-remote";
 const MEMORY_SKILL_NAME: &str = "swiss-memory";
-const MACHINE_SKILL_NAME: &str = "swiss-brief";
-const SHIPPED_SKILLS: [(&str, &str); 4] = [
+const SHIPPED_SKILLS: [(&str, &str); 3] = [
     (SKILL_NAME, SKILL_MD),
     (REMOTE_SKILL_NAME, REMOTE_SKILL_MD),
     (MEMORY_SKILL_NAME, MEMORY_SKILL_MD),
-    (MACHINE_SKILL_NAME, MACHINE_SKILL_MD),
 ];
 
 /// The skills whose Claude Code copy runs a command as it loads: (name, the step every other
 /// client reads, what replaces it there, the frontmatter line that grants the one tool).
-const RUNS_ON_LOAD: [(&str, &str, &str, &str); 2] = [
-    (REMOTE_SKILL_NAME, BRIEF_STEP, BRIEF_RAN, BRIEF_TOOLS),
-    (MACHINE_SKILL_NAME, MACHINE_STEP, MACHINE_RAN, MACHINE_TOOLS),
-];
+const RUNS_ON_LOAD: [(&str, &str, &str, &str); 1] = [(REMOTE_SKILL_NAME, BRIEF_STEP, BRIEF_RAN, BRIEF_TOOLS)];
 
 /// The only directories a skill goes to. Copies an older build left under `.cursor` or `.codex`
 /// are neither read nor refreshed.
@@ -608,7 +595,7 @@ mod tests {
         let installed = home.plant_old_copy(".agents", "swiss");
         std::fs::create_dir_all(home.0.join(".claude/skills/swiss-memory")).expect("mkdir");
         let rows = home.places().status();
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].name, "swiss");
         assert_eq!(
             rows[0].locations.iter().map(|l| l.root.as_str()).collect::<Vec<_>>(),
@@ -759,8 +746,6 @@ mod tests {
             ("swiss-memory", ".agents"),
             ("swiss-remote", ".claude"),
             ("swiss-remote", ".agents"),
-            ("swiss-brief", ".claude"),
-            ("swiss-brief", ".agents"),
         ] {
             assert_eq!(state_of(&rows, name, root), CopyState::Absent, "{name} in {root}");
             assert!(!home.file(root, name).parent().expect("a directory").exists(), "{name} in {root}");
@@ -797,7 +782,7 @@ mod tests {
     fn list_says_which_skills_load_by_themselves() {
         let rows = TempHome::new().places().status();
         let loads: Vec<_> = rows.iter().map(|s| (s.name.as_str(), s.loads_by_itself)).collect();
-        assert_eq!(loads, [("swiss", false), ("swiss-remote", false), ("swiss-memory", true), ("swiss-brief", true)]);
+        assert_eq!(loads, [("swiss", false), ("swiss-remote", false), ("swiss-memory", true)]);
         for skill in &rows {
             assert!(!skill.description.is_empty(), "{}", skill.name);
             assert!(!skill.description.starts_with('>'), "{}: the block's text, not its marker", skill.name);
@@ -939,35 +924,6 @@ mod tests {
         }
         std::fs::remove_file(home.0.join(".agents/skills/swiss-remote/REFERENCE.md")).expect("drop it");
         assert_eq!(state_of(&home.places().status(), "swiss-remote", ".agents"), CopyState::Outdated, "a missing companion is refreshed");
-    }
-
-    // SPEC §lane.brief: the machine skill loads by itself, and its Claude Code copy opens on
-    // `swiss brief` already run; a client without `!` reads the step.
-    #[test]
-    fn the_machine_skill_runs_swiss_brief_where_the_client_can() {
-        assert_eq!(MACHINE_SKILL_MD.matches(MACHINE_STEP).count(), 1, "the step the Claude Code copy replaces");
-        assert!(MACHINE_SKILL_MD.starts_with("---\nname: swiss-brief\n"));
-        for teaches in ["swiss lane run -- ", "--wait", "swiss process logs", "swiss-remote", "swiss-memory"] {
-            assert!(MACHINE_SKILL_MD.contains(teaches), "{teaches}");
-        }
-
-        let home = TempHome::new();
-        home.places().install_named(&names(&["swiss-brief"])).expect("install");
-        let claude = std::fs::read_to_string(home.file(".claude", "swiss-brief")).expect("claude copy");
-        assert!(claude.contains("\n!`swiss brief`"), "{claude}");
-        assert!(!claude.contains(MACHINE_STEP));
-        let head = claude.split("\n---\n").next().expect("frontmatter");
-        assert!(head.ends_with("\nallowed-tools: Bash(swiss brief:*)"), "{head}");
-        assert!(loads_by_itself(&claude));
-
-        let agents = std::fs::read_to_string(home.file(".agents", "swiss-brief")).expect("agents copy");
-        assert_eq!(agents, MACHINE_SKILL_MD);
-        for root in [".claude", ".agents"] {
-            assert_eq!(state_of(&home.places().status(), "swiss-brief", root), CopyState::Current);
-        }
-        // The remote skill's copy still runs its own brief, not this one.
-        let remote = rendered(REMOTE_SKILL_NAME, ".claude").expect("shipped");
-        assert!(remote.contains(BRIEF_TOOLS) && !remote.contains(MACHINE_TOOLS));
     }
 
     #[test]
