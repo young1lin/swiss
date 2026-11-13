@@ -1401,3 +1401,33 @@ export interface ApiMongoImportReply {
   errorCount: number;
   errors: { index?: number; message: string }[];
 }
+
+/* --- the lane (swiss-plugins/src/lane, SPEC §lane.api) ------------------------------------------- */
+
+/** One entry - queue.rs entry_json. startedAt is absent while it waits; endedAt, outcome and
+ *  exit ride only on a recent row. */
+export interface ApiLaneEntry {
+  id: number;
+  cmd: string;
+  cwd: string;
+  by: string;
+  session?: string;
+  pid?: number;
+  enteredAt: number;
+  startedAt?: number;
+  resumed?: boolean;
+  endedAt?: number;
+  outcome?: "exit" | "gone" | "released";
+  /** With outcome "exit": the code; absent when a signal took the command. */
+  exit?: number;
+}
+
+/** GET /api/lane - queue.rs Lane::snapshot. running and waiting in arrival order, recent newest first. */
+export interface ApiLaneResponse {
+  capacity: number;
+  env: Record<string, string>;
+  revision: number;
+  running: ApiLaneEntry[];
+  waiting: ApiLaneEntry[];
+  recent: ApiLaneEntry[];
+}

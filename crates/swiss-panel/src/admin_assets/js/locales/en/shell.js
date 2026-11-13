@@ -570,6 +570,7 @@ const shell                         = {
   "wire.embedding": "Embedding",
   "wire.agents": "Agents",
   "wire.history": "History",
+  "wire.lane": "Lane",
   /* --- ui (SPEC §panel.ui: the component library) --- */
   "ui.toTop": "Back to top",
   "ui.grip.resize": "Resize {name}",
@@ -683,6 +684,7 @@ const shell                         = {
   "served.updateOtherExe": "The gateway is running a different program, so it was left alone.",
   "served.updateRunning": "An update is already running.",
   "served.updateCannotDetach": "The updater would stop when swiss stops, so it was not started.",
+  "served.laneUnknown": "That command already left the lane.",
   "served.llmToolsRuntime": "This runtime is not available.",
   "served.llmToolsTool": "This tool is not part of the runtime.",
   "served.llmToolsDirectory": "Choose an existing test directory inside your home directory.",

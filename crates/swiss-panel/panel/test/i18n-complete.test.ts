@@ -54,6 +54,7 @@ const WIRE_KEYS = [
   "wire.sshConnections", "wire.portForwards", "wire.targets", "wire.runs",
   "wire.plugins", "wire.secrets", "wire.system", "wire.memory",
   "wire.llm", "wire.providers", "wire.embedding", "wire.agents", "wire.history",
+  "wire.lane",
 ];
 
 /* Every literal key at a tr()/trn()/tk() call site, collected from the TS sources with

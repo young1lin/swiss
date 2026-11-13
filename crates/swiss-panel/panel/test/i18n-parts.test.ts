@@ -51,7 +51,7 @@ const PARTS = ["memory", "llm", "gallery", "data-mongo", "data", "ops", "shell"]
 
 const OPS = new Set([
   "process", "jobs", "logs", "runHistory", "remoteRuns", "remote",
-  "tunnels", "tunnelSheets", "terminal", "terminalSettings", "traffic",
+  "tunnels", "tunnelSheets", "terminal", "terminalSettings", "traffic", "lane",
 ]);
 
 function partFor(prefix: string): string {

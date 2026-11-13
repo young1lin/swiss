@@ -361,6 +361,11 @@ export enum Module {
    * @generated from enum value: MODULE_PANEL = 14;
    */
   PANEL = 14,
+
+  /**
+   * @generated from enum value: MODULE_LANE = 20;
+   */
+  LANE = 20,
 }
 
 /**

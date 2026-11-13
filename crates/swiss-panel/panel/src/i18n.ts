@@ -137,6 +137,7 @@ const WIRE_LABELS: Record<string, string> = {
   "Plugins": "wire.plugins", "Secrets": "wire.secrets", "System": "wire.system",
   "Memory": "wire.memory", "LLM": "wire.llm", "Providers": "wire.providers",
   "Embedding": "wire.embedding", "Agents": "wire.agents", "History": "wire.history",
+  "Lane": "wire.lane",
 };
 
 /** Map a gateway-served label to its key; unknown text passes through unchanged. */
@@ -178,6 +179,7 @@ const SERVED_CODES: Record<string, string> = {
   "update.otherExe": tk("served.updateOtherExe"),
   "update.running": tk("served.updateRunning"),
   "update.cannotDetach": tk("served.updateCannotDetach"),
+  "lane.unknown": tk("served.laneUnknown"),
 };
 
 /** A refusal's words: its code's own copy, filled from `params`; a code this build does not

@@ -58,7 +58,7 @@ const RAIL_LIMIT = 15;
  * broken glyph, one seat in a row of drawings that is suddenly type. This is panel-side
  * chrome data, deliberately NOT a descriptor field: adding icon metadata to the wire would
  * tax every plugin author for a panel nicety. */
-const GLYPHS: Record<string, string> = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear", memory: "brain", llm: "sparkles", process: "activity" };
+const GLYPHS: Record<string, string> = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear", memory: "brain", llm: "sparkles", process: "activity", lane: "gauge" };
 const DEFAULT_GLYPH = "puzzle";
 
 function pluginGlyph(group: PaletteGroup | PageGroup): string | null { return GLYPHS[group.id] || null; }
