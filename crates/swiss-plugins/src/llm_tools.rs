@@ -259,14 +259,14 @@ pub(crate) fn pinned(root: &Path, path: &str) -> Result<PathBuf, String> {
 }
 
 /// A path as a person writes it: the verbatim prefix Windows' canonical form carries
-/// (`\?\C:\...`, `\?\UNC\server\share`) dropped, which a model would copy into
+/// (`\\?\C:\...`, `\\?\UNC\server\share`) dropped, which a model would copy into
 /// commands that then fail.
 pub(crate) fn plain_path(path: &Path) -> String {
     let text = path.display().to_string();
-    if let Some(share) = text.strip_prefix(r"\?\UNC\") {
-        return format!(r"\{share}");
+    if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{share}");
     }
-    text.strip_prefix(r"\?\").map(str::to_string).unwrap_or(text)
+    text.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(text)
 }
 
 /// Truncate at a cap without slicing through a multi-byte character: String's
@@ -406,6 +406,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("swiss-llm-tools-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("temp dir");
         dir
+    }
+
+    #[test]
+    fn a_plain_path_drops_the_verbatim_prefix() {
+        assert_eq!(plain_path(Path::new(r"\\?\C:\Users\me\repo")), r"C:\Users\me\repo");
+        assert_eq!(plain_path(Path::new(r"\\?\UNC\server\share\dir")), r"\\server\share\dir");
+        assert_eq!(plain_path(Path::new(r"C:\Users\me")), r"C:\Users\me");
+        assert_eq!(plain_path(Path::new("/home/me/repo")), "/home/me/repo");
+        // What canonicalize really hands back on this platform reads plain.
+        let canonical = std::fs::canonicalize(std::env::temp_dir()).expect("canonical");
+        assert!(!plain_path(&canonical).starts_with(r"\\?\"), "{}", plain_path(&canonical));
     }
 
     #[test]
