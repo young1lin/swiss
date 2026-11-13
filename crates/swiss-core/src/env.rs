@@ -141,9 +141,19 @@ pub unsafe fn scrub_process_env() {
 /// What [scrub_process_env] struck, as it was at launch; empty when it never ran.
 static STRUCK: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
 
+/// Every variable [scrub_process_env] struck, as it was at launch; empty when it never ran.
+///
+/// For one caller only: a CLI that runs a command AS its caller (`swiss lane run -- <cmd>`,
+/// SPEC §lane.cli). That command must behave exactly as if the caller had run it directly, so
+/// it gets these back - an agent's CI=1 or NO_COLOR is the agent's choice, not launcher noise
+/// leaking into a daemon. A daemon's children never see them.
+pub fn struck_env() -> Vec<(String, String)> {
+    STRUCK.get().cloned().unwrap_or_default()
+}
+
 /// A variable as this process was launched with it: the live environment, else the value the
 /// scrub took away. Only for describing the launcher (who called this CLI); nothing read here
-/// is ever handed to a child.
+/// is handed to a daemon's child.
 pub fn launch_var(name: &str) -> Option<String> {
     std::env::var(name).ok().or_else(|| {
         STRUCK

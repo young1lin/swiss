@@ -560,6 +560,7 @@ const shell                         = {
   "wire.embedding": "向量化",
   "wire.agents": "智能体",
   "wire.history": "历史",
+  "wire.lane": "队列",
   /* --- ui (SPEC §panel.ui: the component library) --- */
   "ui.toTop": "回到顶部",
   "ui.grip.resize": "调整{name}的大小",
@@ -666,6 +667,7 @@ const shell                         = {
   "served.updateOtherExe": "网关正在运行另一个程序，因此没有改动它。",
   "served.updateRunning": "已有一个更新在运行。",
   "served.updateCannotDetach": "更新进程会随 swiss 一起退出，因此没有启动。",
+  "served.laneUnknown": "该命令已离开队列。",
   "served.llmToolsRuntime": "此运行时不可用。",
   "served.llmToolsTool": "此运行时不包含该工具。",
   "served.llmToolsDirectory": "请选择用户主目录内已存在的测试目录。",

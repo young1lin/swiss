@@ -271,6 +271,13 @@ impl Bus {
         self.stop.subscribe()
     }
 
+    /// Turns true when [Bus::shutdown] starts: the gateway is stopping. For a module that holds
+    /// a long response open outside the bus (the lane's leases, SPEC §lane.api): it ends that
+    /// response here, so the server's connection drain does not wait out its timeout.
+    pub fn stopping(&self) -> watch::Receiver<bool> {
+        self.stop.subscribe()
+    }
+
     pub(crate) fn try_open(self: &Arc<Self>) -> Option<Opened> {
         let mut inner = lock(&self.inner);
         if inner.links.len() >= MAX_LINKS {

@@ -23,11 +23,13 @@
 pub mod adminapi;
 pub mod app;
 pub mod autostart;
+pub mod brief_cli;
 pub mod bootstrap;
 pub mod builtin;
 pub mod cli;
 pub mod daemon;
 pub mod gui;
+pub mod lane_cli;
 pub mod mcp_link;
 pub mod memory_cli;
 pub mod pidfile;

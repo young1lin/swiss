@@ -45,8 +45,7 @@ The workflow is `.github/workflows/build.yml`.
   is `dev-<sha8>`) and holds the binary, `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`,
   `SETUP.md` and the three skills (`skills/swiss/SKILL.md`, `skills/swiss/SETUP.md`,
   `skills/swiss-remote/SKILL.md`, `skills/swiss-remote/REFERENCE.md`, `skills/swiss-memory/SKILL.md`,
-  from `src/skill_assets`
-  and the root `SETUP.md`).
+  from `src/skill_assets` and the root `SETUP.md`).
 - **`release`** — needs `tag-version`, `check`, `dist`, `panel`, `deny` and `integration`.
   It installs `zstd` and, for each of the five archive targets (not the macOS `.app` zip),
   extracts the new exe and compresses it with `zstd -19 --long=27` to

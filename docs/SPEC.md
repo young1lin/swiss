@@ -86,6 +86,7 @@ in §decisions.
 | 0017 | [§release](spec/0017-release.md) | — | CI, release artefacts, open-source hygiene |
 | 0018 | [§decisions](spec/0018-decisions.md) | — | ADR-001 … the decision log |
 | 0019 | [§bus](spec/0019-bus.md) | `swiss-bus` | The event bus: one WebSocket per page, protobuf frames, generated codecs |
+| 0020 | [§lane](spec/0020-lane.md) | — | The machine-wide queue for heavy commands, and `swiss brief` |
 
 ## Anchor map
 
@@ -378,3 +379,12 @@ in §decisions.
 - [§bus.editing — One person edits](spec/0019-bus.md#busediting--one-person-edits)
 - [§bus.codegen — The generated code](spec/0019-bus.md#buscodegen--the-generated-code)
 - [§bus.security — Who may connect](spec/0019-bus.md#bussecurity--who-may-connect)
+
+### 0020 · [§lane — The lane](spec/0020-lane.md)
+
+- [§lane.queue — Who holds a slot, who waits](spec/0020-lane.md#lanequeue--who-holds-a-slot-who-waits)
+- [§lane.config — The row](spec/0020-lane.md#laneconfig--the-row)
+- [§lane.api — Routes](spec/0020-lane.md#laneapi--routes)
+- [§lane.cli — `swiss lane`](spec/0020-lane.md#lanecli--swiss-lane)
+- [§lane.panel — The Lane page](spec/0020-lane.md#lanepanel--the-lane-page)
+- [§lane.brief — `swiss brief`](spec/0020-lane.md#lanebrief--swiss-brief)

@@ -54,6 +54,10 @@ const SHIPPED_SKILLS: [(&str, &str); 3] = [
     (MEMORY_SKILL_NAME, MEMORY_SKILL_MD),
 ];
 
+/// The skills whose Claude Code copy runs a command as it loads: (name, the step every other
+/// client reads, what replaces it there, the frontmatter line that grants the one tool).
+const RUNS_ON_LOAD: [(&str, &str, &str, &str); 1] = [(REMOTE_SKILL_NAME, BRIEF_STEP, BRIEF_RAN, BRIEF_TOOLS)];
+
 /// The only directories a skill goes to. Copies an older build left under `.cursor` or `.codex`
 /// are neither read nor refreshed.
 const ROOTS: [&str; 2] = [".claude", ".agents"];
@@ -129,16 +133,17 @@ fn shipped_body(name: &str) -> Option<&'static str> {
         .map(|(_, body)| *body)
 }
 
-/// A shipped skill as it lands in one root: the remote skill's Claude Code copy runs its brief
-/// as it loads (see [BRIEF_STEP]); every other copy is the text as shipped.
+/// A shipped skill as it lands in one root: the Claude Code copy of a skill in [RUNS_ON_LOAD]
+/// runs its brief as it loads (see [BRIEF_STEP]); every other copy is the text as shipped.
 fn rendered(name: &str, root: &str) -> Option<Cow<'static, str>> {
     let body = shipped_body(name)?;
-    if name != REMOTE_SKILL_NAME || root != ".claude" {
+    let runs = RUNS_ON_LOAD.iter().find(|(skill, ..)| *skill == name);
+    let Some((_, step, ran, tools)) = runs.filter(|_| root == ".claude") else {
         return Some(Cow::Borrowed(body));
-    }
-    let ran = body.replacen(BRIEF_STEP, BRIEF_RAN, 1);
+    };
+    let ran = body.replacen(step, ran, 1);
     // The first "\n---\n" closes the frontmatter: the body opens with "---\n".
-    Some(Cow::Owned(ran.replacen("\n---\n", &format!("\n{BRIEF_TOOLS}\n---\n"), 1)))
+    Some(Cow::Owned(ran.replacen("\n---\n", &format!("\n{tools}\n---\n"), 1)))
 }
 
 /// The files a skill ships beside its `SKILL.md`, installed and replaced with it.
