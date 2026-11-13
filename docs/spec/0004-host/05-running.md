@@ -100,10 +100,15 @@ dispatch; `gui --help` and `gui --version` finish without opening a window.
   the pid file's entry) and says "restart to pick it up" when they differ; `--json` carries
   `build` and `diskBuild`.
 - **Build stamp.** `build.rs` sets `SWISS_GIT_HASH` (`<short>` or `<short>-dirty`),
-  `SWISS_BUILD_TIME` (RFC 3339 UTC) and `SWISS_TARGET` (the rustc target triple). The hash and
+  `SWISS_BUILD_TIME` (RFC 3339 UTC), `SWISS_TARGET` (the rustc target triple) and
+  `SWISS_CHANNEL` (`release` when the dist job sets it, otherwise `dev`). The hash and
   the time are `unknown` without git, and the target is `unknown` when cargo did not set it —
-  the build never fails for a missing stamp. `build_info()` serves `{hash, time, version, target}`.
+  the build never fails for a missing stamp. `build_info()` serves `{hash, time, version, target, channel}`.
   `swiss --version` prints `swiss <version> (<hash>, <time>)` and does not include the target.
+  At boot a background task deletes `<exe>.old` and `<exe>.old.*` beside the binary. It
+  skips that delete while `<data dir>/update/update.lock` names a live pid, because that
+  updater still owns the parked exe. A lock whose pid cannot be read is stale for this check;
+  updaters exclude each other through `update.guard` (§host.cli), not through this file.
 - **Logs.** JSON lines `{ts, level, msg, extra?}` on stderr, redirected by the daemon into
   `gateway-<port>.log`, rotated at 10 MB keeping one generation. Stdout belongs to the command, so
   a state migration that logs during `swiss export` or `swiss api` cannot reach a redirected

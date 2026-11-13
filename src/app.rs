@@ -63,6 +63,7 @@ pub fn build_info() -> Value {
         "time": env!("SWISS_BUILD_TIME"),
         "version": env!("CARGO_PKG_VERSION"),
         "target": env!("SWISS_TARGET"),
+        "channel": env!("SWISS_CHANNEL"),
     })
 }
 
@@ -141,6 +142,12 @@ pub struct AppContext {
     /// Unset in every test composition, so the route answers 503 and opens no connection.
     /// The CLI calls `update_check::check` directly and does not read this seam.
     pub update_check: std::sync::OnceLock<Arc<dyn crate::update_check::UpdateCheck>>,
+    /// `POST /api/update/apply`. Set once at boot to the real spawner. Unset in
+    /// every test composition, so the route answers 503 and starts no process.
+    pub update_apply: std::sync::OnceLock<Arc<dyn crate::update::UpdateSpawner>>,
+    /// The updater this process spawned, if it has not exited yet. Always
+    /// present, including in tests, so a second apply can see the first.
+    pub update_run: Arc<crate::update::InFlight>,
     /// The gateway's own children (SPEC §process.children): the one list runs, proc MCPs
     /// and terminals register into, and /api/memory takes its roots from. Set once by the
     /// boot sequence from RuntimeServices; unset in test compositions, where there are no
@@ -183,6 +190,8 @@ impl AppContext {
             autostart: std::sync::OnceLock::new(),
             user_path: std::sync::OnceLock::new(),
             update_check: std::sync::OnceLock::new(),
+            update_apply: std::sync::OnceLock::new(),
+            update_run: Arc::new(crate::update::InFlight::new()),
             children: std::sync::OnceLock::new(),
             bus: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),

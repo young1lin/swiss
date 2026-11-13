@@ -689,3 +689,23 @@ Rejected:
 
 A writer that forgets to publish is a bug a test must catch, because nothing re-reads by
 itself any more.
+
+## ADR-041 — swiss updates itself from a short-lived CLI process, by patch when it can
+
+**Accepted.** Spec: §host.cli, §release.ci. The old non-goal was "no self-updating binary",
+because a downloader inside the resident gateway would sit in the idle memory budget. The
+reason still holds. The conclusion does not: `swiss update --apply` is a separate process.
+It downloads a zstd patch from the previous exe when the local file's SHA-256 matches
+(`zstd --patch-from`, level 19, window log 27), otherwise the full `.zst`, checks the hash,
+probes the new exe, then renames. The decode streams into `<exe>.new` with a running SHA-256,
+so the updater holds only the old exe, as the patch's reference. The gateway only learns about
+an update when that process stops it and starts the new file. The panel's Update button spawns
+the same command and never forces. A signed manifest is the open item; until then the trust
+is HTTPS to GitHub plus the SHA-256 in `update.json`.
+
+Rejected:
+
+- **Downloading inside the gateway.** That is the memory cost the non-goal was written to avoid.
+- **bsdiff or Courgette.** Extra code, or Windows-only, for a decoder the tree already links.
+- **A self-replace crate.** The rename is short and has to be tested with a failed second step.
+

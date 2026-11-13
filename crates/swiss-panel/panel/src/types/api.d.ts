@@ -31,6 +31,8 @@ export interface ApiBuildInfo {
   version?: string;
   /** The rustc target triple. Absent on an older gateway. */
   target?: string;
+  /** The release channel (`release`, `dev`, ...). Absent on an older gateway. */
+  channel?: string;
 }
 
 export interface ApiInfoResponse {
@@ -45,6 +47,8 @@ export interface ApiUpdateCheckResponse {
   currentVersion: string;
   latest: { tag: string; url: string } | null;
   newer: boolean;
+  /** The download the CLI would name, when update.json named one. */
+  plan?: { via: "patch" | "full"; bytes: number; full: number } | null;
 }
 
 /** GET /api/memory - swiss-host/src/mem.rs; polled for the footer readout. */
@@ -118,8 +122,12 @@ export interface ApiSkillStatus {
 export interface ApiSkillsResponse {
   seats?: ApiSkillSeat[];
   skills?: ApiSkillStatus[];
+  /** Present only when skill-seats.json cannot be parsed: its seats are then missing above. */
+  ledger?: { path: string; error: string };
   replaced?: string[];
   failed?: string[];
+  /** POST /api/skills/refresh only: a missing seat or an unparseable ledger, left as it was. */
+  skipped?: string[];
 }
 
 export type MachineSettingKey = "autostart" | "user-path";

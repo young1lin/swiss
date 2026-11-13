@@ -22,7 +22,10 @@ let installFailure = false;
 let markOutdated = false;
 let missingSeat = false;
 let seatInvalid = false;
-function skillDocument(): { skills: unknown[]; seats?: unknown[]; replaced?: string[]; failed?: string[] } {
+let installRefused = false;
+let forgetRefused = false;
+let brokenLedger = false;
+function skillDocument(): { skills: unknown[]; seats?: unknown[]; ledger?: unknown; replaced?: string[]; failed?: string[] } {
   const skills = ["swiss", "swiss-memory", "swiss-remote"].map(name => ({
     name, locations: [".claude", ".agents"].map(root => {
       const outdated = markOutdated && name === "swiss" && root === ".agents";
@@ -41,7 +44,10 @@ function skillDocument(): { skills: unknown[]; seats?: unknown[]; replaced?: str
     { kind: "agents", dir: "/user/.agents/skills", source: "env", exists: true },
     { kind: "claude", dir: "/user/gone", source: "ledger", exists: false },
   ] : undefined;
-  return { skills, ...(seats ? { seats } : {}) };
+  const ledger = brokenLedger
+    ? { path: "/data/skill-seats.json", error: "skill seats at /data/skill-seats.json could not be read (expected value); the file was not changed" }
+    : undefined;
+  return { skills, ...(seats ? { seats } : {}), ...(ledger ? { ledger } : {}) };
 }
 function skillReply(): Response {
   return new Response(JSON.stringify(skillDocument()));
@@ -54,11 +60,15 @@ beforeEach(() => {
   skillWrites.length = 0; seatPosts.length = 0; seatDeletes.length = 0; refreshPosts = 0;
   installedTargets.clear(); installWait = null; installFailure = false;
   markOutdated = false; missingSeat = false; seatInvalid = false;
+  installRefused = false; forgetRefused = false; brokenLedger = false;
   vi.stubGlobal("fetch", async (path: string, init?: RequestInit) => {
     if (path === "/api/skills/install") {
       const target = JSON.parse(String(init?.body)) as { name: string; root?: string; dir?: string };
       skillWrites.push(target);
       if (installWait) await installWait;
+      if (installRefused) {
+        return new Response(JSON.stringify({ error: "unknown skill directory", code: "skills.unknownDir" }), { status: 400 });
+      }
       if (installFailure) return new Response(JSON.stringify({ error: "permission denied" }), { status: 500 });
       installedTargets.add(target.name + ":" + (target.root || target.dir));
       return skillReply();
@@ -72,6 +82,9 @@ beforeEach(() => {
     }
     if (path === "/api/skills/seats" && init?.method === "DELETE") {
       seatDeletes.push(JSON.parse(String(init.body)) as { dir?: string });
+      if (forgetRefused) {
+        return new Response(JSON.stringify({ error: "default seat: /user/gone comes back from the environment", code: "skills.seatDefault" }), { status: 400 });
+      }
       return skillReply();
     }
     if (path === "/api/skills/seats") {
@@ -185,7 +198,8 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     expect(refreshPosts).toBe(0);
     expect(document.body.textContent).toContain("1 outdated");
     document.querySelector<HTMLButtonElement>("#system-skills-update")?.click();
-    await vi.waitFor(() => { expect(document.querySelector("#toast")?.textContent).toContain("Updated 1 copies"); });
+    await vi.waitFor(() => { expect(document.querySelector("#toast")?.textContent).toContain("Updated 1 copy"); });
+    expect(document.querySelector("#toast")?.textContent).not.toContain("copies");
     expect(refreshPosts).toBe(1);
     expect(skillWrites).toEqual([]);
   });
@@ -212,6 +226,31 @@ describe("System machine settings and AI skills (SPEC §panel.settings)", () => 
     expect(document.querySelector("#skill-forget-confirm")).not.toBeNull();
     document.querySelector<HTMLButtonElement>("#skill-forget-confirm")?.click();
     await vi.waitFor(() => { expect(seatDeletes).toEqual([{ dir: "/user/gone" }]); });
+  });
+
+  it("says a refused install or Forget in the panel's words, not the server's English", async () => {
+    installRefused = true;
+    forgetRefused = true;
+    missingSeat = true;
+    await system.mount();
+    document.querySelector<HTMLButtonElement>('[data-skill-install="swiss-memory"][data-skill-directory=".agents"]')?.click();
+    await vi.waitFor(() => { expect(document.querySelector("#toast")?.textContent).toBe("That directory is not a known skill seat."); });
+    document.querySelector<HTMLButtonElement>("[data-skill-missing] [data-skill-forget]")?.click();
+    document.querySelector<HTMLButtonElement>("#skill-forget-confirm")?.click();
+    await vi.waitFor(() => {
+      expect(document.querySelector("#toast")?.textContent).toBe("A default skill directory comes back from the environment and cannot be forgotten.");
+    });
+    expect(document.querySelector("#toast")?.textContent).not.toContain("default seat:");
+  });
+
+  it("names a skill-seats file it could not read above the tables", async () => {
+    brokenLedger = true;
+    await system.mount();
+    const line = document.querySelector("[data-skills-ledger]");
+    expect(line?.textContent).toContain("/data/skill-seats.json");
+    expect(line?.textContent).toContain("fix or remove it");
+    expect(line?.getAttribute("title")).toContain("the file was not changed");
+    expect(document.querySelectorAll("[data-skill]")).toHaveLength(6);
   });
 });
 

@@ -50,12 +50,14 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   locations: [{root, kind, dir, source, path, installed, state, error?}]}]}`. `source` is `env`,
   `ledger` or `both`. `installed` is true/false, or null when the filesystem refused the check
   or the seat's directory is gone; `state` is `absent`, `current`, `outdated`, `unreadable` or
-  `missing`. A claude seat is gone when its config directory is: the `skills` under it may not
+  `missing`. A ledger that cannot be parsed adds `ledger: {path, error}` and contributes no
+  seat; the file is left as it was. A claude seat is gone when its config directory is: the `skills` under it may not
   exist before the first install, and its skills then read `absent`. An agents seat is gone when
   its skills directory is. Only a ledger seat can be `missing`. There is no idle scanner.
 - **Selected skill installation.** `POST /api/skills/install` accepts `{name, root}` for a
   default seat, or `{name, dir}` where `dir` is a known seat. A directory that is not a known
-  seat is 400 `skills.unknownDir`, and a ledger seat that is gone is 400 `skills.seatInvalid`:
+  seat is 400 `skills.unknownDir`, a name this binary does not ship is 400
+  `skills.unknownSkill`, and a ledger seat that is gone is 400 `skills.seatInvalid`:
   an install never recreates it (`a_missing_ledger_seat_refuses_an_install`). It stages and atomically replaces that seat's `SKILL.md`
   and the companions shipped beside it (`SETUP.md` for `swiss`, `REFERENCE.md` for
   `swiss-remote`), preserving other files and skills, then returns the current inspection
@@ -63,11 +65,14 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
   differently per kind: `swiss-remote`'s claude copy runs its brief as it loads
   (§remote.project), and the check compares each seat against what that kind gets. Unknown
   targets and extra request fields are refused before filesystem access.
-  `POST /api/skills/refresh` is `swiss skill install --installed`: `{replaced, failed, skills}`.
+  `POST /api/skills/refresh` is `swiss skill install --installed`: the inspection plus
+  `{replaced, failed, skipped}` (`skipped` names a missing seat or an unparseable ledger).
   `POST /api/skills/seats` records `{kind, dir}` and answers the inspection; a path that is not
   absolute, not a directory, or a ledger that cannot be parsed is 400 `skills.seatInvalid` and
   the ledger file is left as it was. `DELETE /api/skills/seats` forgets `{dir}`; a default seat
   is 400 `skills.seatDefault`. Writes run on the blocking pool and require the same admin session.
+  Every ledger write holds an OS lock on `skill-seats.lock` beside it across its read, change and
+  write, so two writers (two requests, or the CLI and the gateway) never drop each other's row.
 - **`export` / `import`** — the one plaintext escape: a v1 bundle of config, managed, tunnels,
   OAuth, env and secrets (vault values masked, §host.vault). It moves those six and no more:
   `remote.json`, `memory/store.sqlite3`, the LLM records and each module's history databases stay
@@ -97,12 +102,40 @@ path [on|off] | update | serve | remote … | run … | process … | api <METHO
 - Both machine settings reach the admin API through `AppContext` seams (`autostart`,
   `user_path`) that only the boot sequence sets to the OS providers, so no test composition can
   write the host (§testing.rules).
-- **`update`** — checks GitHub for a newer release; updating stays a manual exe swap, then
-  `swiss skill install --installed`. Settings → System asks the same question through
+- **`update`** — `swiss update` checks GitHub. When the newest release publishes `update.json`,
+  the check also names the download (`patch from <version>, <size> (full <size>)` or
+  `full, <size>`) and tells you to run `swiss update --apply`. A dev build
+  (`SWISS_CHANNEL=dev`, the default outside the release CI) says `--apply` will refuse it.
+  `swiss update --apply [--force]` downloads, verifies, replaces this exe and restarts the
+  gateway on the same port. Exit 0 is updated or already newest, 1 is a failure with nothing
+  changed or rolled back, 2 is a refusal (dev build without `--force`, a macOS `.app` bundle,
+  an unwritable directory, a live `update.lock`, a gateway running a different exe, or a
+  downgrade). `--force` also allows the same version and a dev build. Nothing downgrades.
+  `SWISS_UPDATE_SOURCE` must be an `http://127.0.0.1:<port>/`, `http://localhost:<port>/` or
+  `http://[::1]:<port>/` URL, or the command exits 2. It replaces the manifest URL, the asset base
+  and the check's release: the check then reads `tag` and `notes` from that `update.json` and
+  never asks GitHub. Each attempt writes
+  `<data dir>/update/last.json` (`from`, `to`, `via`, `bytes`, `ok`, `phase`, `error`,
+  `rolledBack`, `startedAt`, `finishedAt`, `by`). Two updaters never overlap: each takes an OS
+  lock on `<data dir>/update/update.guard` before anything else (the OS drops it with the
+  process), and the holder writes its pid to `update.lock` for status readers. After the
+  restart the updater runs the new exe's `swiss skill install --installed`, stopped after 60 s
+  so a hung refresh cannot hold the lock; its failure is a warning followed by each line that
+  child wrote to stderr, and the update still exits 0. The manual swap remains the path for an app bundle and for a release
+  this binary cannot read. Settings → System asks the same check through
   `GET /api/update/check` (the boot sequence's `UpdateCheck` seam; the CLI calls `check`
-  directly). The body is `{current, currentVersion, latest: {tag, url} | null, newer}`.
-  A composition that mounted no checker answers 503, and a check that cannot reach GitHub
-  answers 502 `update.unreachable`. Neither path downloads or replaces the binary.
+  directly). The body is `{current, currentVersion, latest: {tag, url} | null, newer, plan}`
+  where `plan` is `{via, bytes, full} | null` (`via` is `patch` or `full`; `bytes` is the
+  asset that would be fetched). A composition that mounted no checker answers 503, and a
+  check that cannot reach GitHub answers 502 `update.unreachable`. The panel's Update
+  button is `POST /api/update/apply` (202 `{started: true}`, then the child
+  `swiss update --apply --by-panel`). The panel never passes `--force`: a dev build and the same
+  version stay refused there, and forcing is the terminal's call.
+  `GET /api/update/status` is `{channel, canApply, refusal, running, last}`. `running` is
+  true while this process's updater child is alive or `update.lock` names a live pid.
+  `canApply` is false when `refusal` is `update.devBuild`, `update.bundle`,
+  `update.readOnly` or `update.otherExe`. The gateway process does not download or
+  replace the binary.
 - **`skill list` / `skill install`** — the embedded `swiss`, `swiss-remote` and `swiss-memory`
   skills, and which of them land is the user's answer:
 

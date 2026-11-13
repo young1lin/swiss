@@ -2,9 +2,12 @@
 
 Chapter 0017 of the [swiss specification](../SPEC.md).
 
-swiss ships as one binary per platform from GitHub Releases (ADR-006); there is no installer
-and no self-update — `swiss update` only compares the running build with the newest release
-and prints how to swap the exe (§host.cli). Nothing goes to crates.io: the workspace sets
+swiss ships as one binary per platform from GitHub Releases (ADR-006); there is no installer.
+`swiss update` compares the running build with the newest release. `swiss update --apply`
+downloads and replaces the exe from a short-lived CLI process, never from the resident
+gateway (ADR-041, §host.cli). The release job publishes the compressed exe, the patches and
+`update.json` (below); the workflow itself never downloads or replaces a binary. Nothing goes
+to crates.io: the workspace sets
 `publish = false`, since a stray `cargo publish` would claim ten crate names for one binary.
 The workflow is `.github/workflows/build.yml`.
 
@@ -44,9 +47,20 @@ The workflow is `.github/workflows/build.yml`.
   `skills/swiss-remote/SKILL.md`, `skills/swiss-remote/REFERENCE.md`, `skills/swiss-memory/SKILL.md`,
   from `src/skill_assets`
   and the root `SETUP.md`).
-- **`release`** — needs `tag-version`, `check`, `dist`, `panel`, `deny` and `integration`;
-  writes and verifies `SHA256SUMS` over the archives and `SETUP.md`, and publishes a GitHub
-  Release with generated notes. `SETUP.md` is its own asset as well as a file in every archive.
+- **`release`** — needs `tag-version`, `check`, `dist`, `panel`, `deny` and `integration`.
+  It installs `zstd` and, for each of the five archive targets (not the macOS `.app` zip),
+  extracts the new exe and compresses it with `zstd -19 --long=27` to
+  `swiss-<version>-<target>.zst`. It then takes the previous three published, non-draft,
+  non-prerelease tags below the current tag (`gh release list`), downloads each target's
+  archive, and builds `swiss-<from>-to-<version>-<target>.patch.zst` with
+  `zstd -19 --long=27 --patch-from`. Each patch is decoded immediately and must compare
+  equal to the new exe. `scripts/release_manifest.py` writes `update.json` (schema 1:
+  version, tag, notes URL, and per target the exe name, sha256, size, the full asset, and
+  the patches that survived). A patch larger than 60% of that target's full `.zst` is left
+  out of the manifest and is not published. `SHA256SUMS` covers the archives, the `.zst`
+  files, `update.json` and `SETUP.md`, and is checked before publish. `SETUP.md` is its own
+  asset as well as a file in every archive. The first release that runs this job uses the
+  tags that already exist; a base does not need its own manifest.
 
 TLS: Windows links schannel, unix links rustls, so no unix binary depends on system OpenSSL.
 The macOS desktop bundle is assembled by `scripts/package_macos.py` from the matching

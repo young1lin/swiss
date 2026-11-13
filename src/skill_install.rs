@@ -482,12 +482,21 @@ pub fn install_selected(name: &str, root: &str) -> Result<(), String> {
     Places::of_this_user()?.install_one(name, root)
 }
 
-/// The inspection the CLI's `--json` and `GET /api/skills` both return.
+/// The inspection the CLI's `--json` and `GET /api/skills` both return. A ledger that cannot be
+/// parsed adds `ledger: {path, error}`: its seats are missing from `seats`, and the panel says
+/// why instead of showing only the defaults.
 pub fn inspection(places: &Places) -> serde_json::Value {
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "seats": places.seats(),
         "skills": places.status(),
-    })
+    });
+    if let Some(error) = places.ledger_note() {
+        body["ledger"] = serde_json::json!({
+            "path": places.ledger.to_string_lossy(),
+            "error": error,
+        });
+    }
+    body
 }
 
 /// How often, and how far apart, a denied replace is tried again (about a second in all).
@@ -918,7 +927,9 @@ mod tests {
         assert!(workflow.contains("cp SETUP.md dist-stage/SETUP.md"));
         assert!(workflow.contains("cp SETUP.md dist-stage/skills/swiss/SETUP.md"));
         assert!(workflow.contains("cp SETUP.md dist-bin/SETUP.md"));
-        assert!(workflow.contains("SETUP.md > SHA256SUMS"));
+        // SHA256SUMS covers SETUP.md beside the archives, the update assets and update.json.
+        assert!(workflow.contains("add swiss-*.patch.zst update.json SETUP.md"));
+        assert!(workflow.contains("sha256sum \"${files[@]}\" > SHA256SUMS"));
     }
 
     #[test]

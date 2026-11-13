@@ -20,7 +20,7 @@
 import { $, api, apiJson, toast } from "../util.js";
 import { h } from "../h.js";
 import { currentView } from "../ui-state.js";
-import { servedError, tr } from "../i18n.js";
+import { servedError, tr, trn } from "../i18n.js";
 import { btn, card, closeSheet, iconBtn, note, row, section, sheet, showSheet, tag } from "../ui/index.js";
 import { actionBtn } from "../ui/action.js";
 import { openFieldSheet } from "../ui/sheet.js";
@@ -28,6 +28,7 @@ import { openFieldSheet } from "../ui/sheet.js";
 
 let skills                          = null;
 let seats                        = null;
+let ledger                                         = null;
 const skillBusy = new Set        ();
 let epoch = 0;
 
@@ -36,16 +37,43 @@ export function resetSkills()       {
   skillBusy.clear();
   skills = null;
   seats = null;
+  ledger = null;
 }
 
 export function applySkills(body                          )       {
   if (!body || !body.skills) {
     skills = null;
     seats = null;
+    ledger = null;
     return;
   }
   skills = body.skills;
   seats = body.seats && body.seats.length ? body.seats : null;
+  ledger = body.ledger ?? null;
+}
+
+/** A ledger the gateway could not parse hides its seats; say so, and keep the reason in the title. */
+function ledgerNote()                     {
+  if (!ledger) return null;
+  const line = note(tr("system.skillsLedgerBroken", { path: ledger.path }), { err: true, data: { "skills-ledger": "broken" } });
+  line.title = ledger.error;
+  return line;
+}
+
+/** POST or DELETE a skills route. A refusal is the served code's copy (SPEC §panel.i18n). */
+async function skillsWrite(path        , method        , payload         )                                    {
+  try {
+    const r = await api(path, { method, body: JSON.stringify(payload) });
+    const body          = await r.json().catch(()          => { return {}; });
+    if (!r.ok) {
+      toast(servedError(body, tr("util.httpN", { n: r.status })), true);
+      return null;
+    }
+    return body                     ;
+  } catch {
+    toast(tr("util.requestFailedGatewayRunning"), true);
+    return null;
+  }
 }
 
 function sameDir(a        , b        )          {
@@ -172,7 +200,7 @@ export function skillsSection()              {
     cap: tr("system.skills"),
     note: tr("system.skillsHint"),
     tools,
-  }, ...(Array.isArray(body) ? body : [body]), note(tr("system.skillsActionHint")));
+  }, ledgerNote(), ...(Array.isArray(body) ? body : [body]), note(tr("system.skillsActionHint")));
   part.id = "system-skills";
   return part;
 }
@@ -201,13 +229,14 @@ async function installSkill(name        , root        , dir        )            
   skillBusy.add(key);
   repaint();
   const payload = dir ? { name, dir } : { name, root };
-  const result = await apiJson                   ("/api/skills/install", { method: "POST", body: JSON.stringify(payload) });
+  const result = await skillsWrite("/api/skills/install", "POST", payload);
   if (ticket !== epoch || currentView() !== "system") return;
   skillBusy.delete(key);
   const location = result?.skills?.find(skill => skill.name === name)?.locations.find(item => dir ? sameDir(item.dir || "", dir) : item.root === root);
   const current = skills?.find(skill => skill.name === name)?.locations.find(item => dir ? sameDir(item.dir || "", dir) : item.root === root);
   if (location && current) Object.assign(current, location);
   if (result?.seats) seats = result.seats;
+  if (result) ledger = result.ledger ?? null;
   repaint();
 }
 
@@ -223,7 +252,7 @@ async function updateAll()                {
     applySkills(result);
     const failed = result.failed || [];
     if (failed.length) toast(failed.join("\n"), true);
-    else toast(tr("system.skillsUpdated", { n: (result.replaced || []).length }));
+    else toast(trn((result.replaced || []).length, "system.skillsUpdated.one", "system.skillsUpdated.other"));
   }
   repaint();
 }
@@ -268,7 +297,7 @@ function openForget(dir        )       {
 
 async function forgetSeat(dir        )                {
   const ticket = epoch;
-  const result = await apiJson                   ("/api/skills/seats", { method: "DELETE", body: JSON.stringify({ dir }) });
+  const result = await skillsWrite("/api/skills/seats", "DELETE", { dir });
   closeSheet();
   if (ticket !== epoch || currentView() !== "system") return;
   if (result) applySkills(result);

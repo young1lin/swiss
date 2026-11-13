@@ -120,6 +120,16 @@ async fn selected_skill_install_refuses_arbitrary_names_roots_and_paths() {
         let (status, _) = h.post("/api/skills/install", body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
+    // A refusal the panel can show carries the code it translates (SPEC §panel.i18n).
+    for (body, code) in [
+        (json!({ "name": "../other", "root": ".agents" }), "skills.unknownSkill"),
+        (json!({ "name": "swiss", "root": ".codex" }), "skills.unknownDir"),
+        (json!({ "name": "../other", "dir": "C:/other" }), "skills.unknownDir"),
+    ] {
+        let (status, reply) = h.post("/api/skills/install", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{reply}");
+        assert_eq!(reply["code"], code, "{reply}");
+    }
 }
 
 #[tokio::test]
@@ -198,6 +208,18 @@ async fn skill_seats_are_listed_added_refreshed_and_forgotten() {
     })).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["seats"].as_array().expect("seats").iter().all(|seat| seat["source"] != "ledger"));
+    assert!(body.get("ledger").is_none(), "a readable ledger adds no note: {body}");
+
+    // A ledger that cannot be parsed hides its seats, so the inspection says why.
+    std::fs::write(&ledger, "{ not json").expect("break the ledger");
+    let (status, body) = h.get("/api/skills").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["ledger"]["error"].as_str().is_some_and(|e| e.contains("was not changed")), "{body}");
+    assert!(body["ledger"]["path"].as_str().is_some_and(|p| p.ends_with("skill-seats.json")), "{body}");
+    let (status, body) = h.post("/api/skills/refresh", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["skipped"].as_array().expect("skipped").iter().any(|s| s.as_str().is_some_and(|s| s.contains("was not changed"))), "{body}");
+    assert_eq!(std::fs::read_to_string(&ledger).expect("kept"), "{ not json", "the broken ledger is left byte for byte");
 
     let _ = std::fs::remove_file(&ledger);
     let _ = std::fs::remove_dir_all(user.join(".agents"));

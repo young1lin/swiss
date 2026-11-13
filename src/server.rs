@@ -336,6 +336,16 @@ pub async fn run_gateway() -> Result<(), String> {
     let _ = ctx
         .update_check
         .set(Arc::new(crate::update_check::GithubUpdateCheck));
+    let _ = ctx.update_apply.set(crate::update::real_spawner());
+    // A previous apply's parked exe is no longer needed once this process is the one
+    // that came up. A live updater still holds the lock, and its `.old` stays until
+    // that process exits. Off the accept path: the listener does not wait for the delete.
+    let home = swiss_core::paths::data_dir();
+    let _ = std::thread::Builder::new().name("update-cleanup".into()).spawn(move || {
+        if let Ok(exe) = std::env::current_exe() {
+            crate::update::replace::cleanup_after_boot(&exe, &home);
+        }
+    });
     if let Ok(mut links) = ctx.tunnel_links.write() {
         *links = Some(tunnel_manager.clone());
     }

@@ -35,6 +35,10 @@ fn main() {
     // failing the build — the same rule as the git hash below.
     let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
     println!("cargo:rustc-env=SWISS_TARGET={target}");
+    let channel = std::env::var("SWISS_CHANNEL").unwrap_or_else(|_| "dev".to_string());
+    let channel = if channel.is_empty() || channel.contains(['\n', '\r']) { "dev".to_string() } else { channel };
+    println!("cargo:rustc-env=SWISS_CHANNEL={channel}");
+    println!("cargo:rerun-if-env-changed=SWISS_CHANNEL");
     let hash = git_hash().unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=SWISS_GIT_HASH={hash}");
     println!("cargo:rustc-env=SWISS_BUILD_TIME={}", rfc3339_now());

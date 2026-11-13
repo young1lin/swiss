@@ -688,7 +688,36 @@ fn update_check_body(info: &crate::update_check::UpdateInfo) -> Value {
         "currentVersion": crate::update_check::current_version(),
         "latest": latest,
         "newer": info.newer,
+        "plan": info.plan.as_ref().map(|plan| json!({
+            "via": plan.via,
+            "bytes": plan.bytes,
+            "full": plan.full,
+        })),
     })
+}
+
+fn update_status_body(ctx: &AppContext) -> Value {
+    let channel = crate::update::channel();
+    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("swiss"));
+    let other = crate::pidfile::read_pid_file(crate::daemon::resolve_port()).and_then(|rec| {
+        swiss_core::platform::pid_alive(rec.pid).then_some(rec.entry)
+    });
+    let refusal = crate::update::apply::refusal_for(&exe, channel, other.as_deref().map(std::path::Path::new));
+    crate::update::apply::status_body(
+        &swiss_core::paths::data_dir(),
+        channel,
+        refusal,
+        ctx.update_run.running(),
+    )
+}
+
+fn announce_update(run: &crate::update::InFlight, bus: Option<&swiss_bus::Bus>) {
+    let sub = swiss_bus::pb::v1::HostSub::Update as u32;
+    let id = swiss_bus::pb::v1::UpdateId::UpdateChanged as u32;
+    run.publish(sub, id);
+    if let Some(bus) = bus {
+        swiss_host::notice::publish(bus, sub, id);
+    }
 }
 
 // --- mounting -----------------------------------------------------------------------------------
@@ -727,6 +756,46 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         }
     }));
 
+    // Local read: channel, whether Apply is allowed, and the last attempt.
+    r = r.route("/api/update/status", get(|State(ctx): State<Arc<AppContext>>| async move {
+        admin_json(StatusCode::OK, update_status_body(&ctx))
+    }));
+
+    // Spawn the short-lived updater. An unset seam answers 503 and starts nothing.
+    // The download happens in the child; this process only refuses, or accepts.
+    r = r.route("/api/update/apply", post(|State(ctx): State<Arc<AppContext>>| async move {
+        let Some(spawner) = ctx.update_apply.get() else {
+            return machine_setting_unmounted("update");
+        };
+        if ctx.update_run.running() || crate::update::replace::held_lock_pid(&swiss_core::paths::data_dir()).is_some() {
+            return admin_error_code(StatusCode::CONFLICT, "update.running", "an update is already running");
+        }
+        match spawner.spawn().await {
+            Ok(crate::update::Spawned::Started { pid, done }) => {
+                if let Some(done) = done {
+                    ctx.update_run.start(pid);
+                    let run = ctx.update_run.clone();
+                    let bus = ctx.bus.get().cloned();
+                    tokio::spawn(async move {
+                        let _ = done.await;
+                        run.finish();
+                        announce_update(&run, bus.as_deref());
+                    });
+                }
+                admin_json(StatusCode::ACCEPTED, json!({ "started": true }))
+            }
+            Ok(crate::update::Spawned::CannotDetach) => admin_error_code(
+                StatusCode::CONFLICT,
+                "update.cannotDetach",
+                "run swiss update --apply in a terminal",
+            ),
+            Err(refusal) => {
+                let status = StatusCode::from_u16(refusal.status).unwrap_or(StatusCode::BAD_REQUEST);
+                admin_error_code(status, refusal.code, &refusal.message)
+            }
+        }
+    }));
+
     // Read-only skill inspection, under the same admin session gate as every /api route.
     // Seats are the default directories of this process plus the ledger. Nothing here writes.
     r = r.route("/api/skills", get(|| async {
@@ -752,7 +821,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         let outcome = match (target.root, target.dir) {
             (Some(root), None) => {
                 if !crate::skill_install::valid_target(&name, &root) {
-                    return admin_error(StatusCode::BAD_REQUEST, "unknown skill or skill directory");
+                    let code = if crate::skill_install::shipped_names().contains(&name) { "skills.unknownDir" } else { "skills.unknownSkill" };
+                    return admin_error_code(StatusCode::BAD_REQUEST, code, "unknown skill or skill directory");
                 }
                 tokio::task::spawn_blocking(move || {
                     let places = crate::skill_install::Places::of_this_user()?;
@@ -773,7 +843,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 admin_error_code(StatusCode::BAD_REQUEST, "skills.unknownDir", &error)
             }
             Ok(Err(error)) if error.starts_with("unknown skill") => {
-                admin_error(StatusCode::BAD_REQUEST, &error)
+                admin_error_code(StatusCode::BAD_REQUEST, "skills.unknownSkill", &error)
             }
             Ok(Err(error))
                 if error.contains("was not changed") || error.starts_with(crate::skill_install::MISSING_SEAT) =>
@@ -791,6 +861,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             let mut body = crate::skill_install::inspection(&places);
             body["replaced"] = json!(refresh.replaced);
             body["failed"] = json!(refresh.failed);
+            body["skipped"] = json!(refresh.skipped);
             Ok::<_, String>(body)
         }).await {
             Ok(Ok(body)) => admin_json(StatusCode::OK, body),

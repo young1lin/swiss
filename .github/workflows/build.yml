@@ -18,8 +18,8 @@
 #   Linux and Windows, clippy on the arm Mac - which catches a call that only compiles against
 #   glibc - plus panel, deny and the real-database suite. No release build.
 # - v* tag (e.g. v0.1.0) or a manual run: all of that plus the release build of all five targets;
-#   a tag also verifies the manifest version and publishes one archive per target plus
-#   SHA256SUMS in a GitHub Release.
+#   a tag also verifies the manifest version and publishes one archive per target, a zstd
+#   full file, patches from the previous three releases, update.json and SHA256SUMS.
 # - a change under docs/ alone runs nothing.
 #
 # TLS note (Cargo.toml): Windows builds link schannel, unix builds link rustls — so the unix
@@ -194,6 +194,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake clang
 
       - name: Build
+        env:
+          SWISS_CHANNEL: release
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package macOS desktop application
@@ -300,17 +302,47 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [tag-version, check, dist, panel, deny, integration]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist-bin
           merge-multiple: true
+      - name: Install zstd
+        run: sudo apt-get update && sudo apt-get install -y zstd
+      - name: Build update assets and manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/test_release_manifest.py
+          bash scripts/build_update_assets.sh dist-bin "${GITHUB_REF_NAME#v}" "$GITHUB_REF_NAME"
       - name: Generate SHA-256 checksums
+        shell: bash
         run: |
           cd dist-bin
-          sha256sum swiss-*.zip swiss-*.tar.gz SETUP.md > SHA256SUMS
+          shopt -s nullglob
+          files=()
+          # swiss-*.zst also matches swiss-*.patch.zst. Add each name once.
+          add() {
+            local f x
+            for f in "$@"; do
+              [[ -e "$f" ]] || continue
+              for x in "${files[@]}"; do
+                [[ "$x" == "$f" ]] && continue 2
+              done
+              files+=("$f")
+            done
+          }
+          add swiss-*.zip swiss-*.tar.gz
+          for f in swiss-*.zst; do
+            [[ "$f" == *.patch.zst ]] && continue
+            add "$f"
+          done
+          add swiss-*.patch.zst update.json SETUP.md
+          sha256sum "${files[@]}" > SHA256SUMS
           sha256sum -c SHA256SUMS
       - uses: softprops/action-gh-release@v3
         with:

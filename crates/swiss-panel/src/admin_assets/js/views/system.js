@@ -20,7 +20,7 @@ import { currentView } from "../ui-state.js";
 import { desktopQuit } from "../desktop.js";
 import { tr } from "../i18n.js";
 import { btn, card, closeSheet, emptyNode, hint, paneBody, paneHead, row, section, sheet, showSheet, sw } from "../ui/index.js";
-import { aboutSection, handleAboutClick, resetAbout } from "./system-about.js";
+import { aboutSection, handleAboutClick, resetAbout, unwatchAbout, watchAbout } from "./system-about.js";
 import { applySkills, handleSkillsClick, resetSkills, skillsSection } from "./system-skills.js";
                                                                                                                                 // Admin API contracts.
 const machine                                            = { autostart: null, "user-path": null };
@@ -157,6 +157,7 @@ async function mount()                {
   if (ticket !== generation || currentView() !== "system") return;
   machine.autostart = startup; machine["user-path"] = path; applySkills(checked);
   fill($("pane"), systemBodyNode());
+  watchAbout();
   // One delegated claim on the pane (SPEC §panel.toolchain): the quit button is reached through the
   // pane's own listener, so the wiring survives any repaint of the pane's children.
   $("pane").onclick = (event            )       => {
@@ -171,6 +172,7 @@ async function mount()                {
 
 function unmount()       {
   generation++;
+  unwatchAbout();
   resetAbout();
   resetSkills();
   busy.clear();

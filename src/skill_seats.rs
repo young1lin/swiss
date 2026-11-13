@@ -108,6 +108,7 @@ pub fn ensure_writable(path: &Path) -> Result<(), String> {
 /// Record one seat. A seat already present is left as it was, including its `addedAt`.
 pub fn remember(path: &Path, kind: SeatKind, dir: &Path) -> Result<(), String> {
     let dir = normalize_dir(dir);
+    let _held = lock_ledger(path);
     let mut seats = match load(path) {
         LedgerLoad::Missing => Vec::new(),
         LedgerLoad::Seats(seats) => seats,
@@ -127,6 +128,7 @@ pub fn remember(path: &Path, kind: SeatKind, dir: &Path) -> Result<(), String> {
 /// Drop ledger rows whose directory is this one. A missing ledger is already empty.
 pub fn forget(path: &Path, dir: &Path) -> Result<(), String> {
     let dir = normalize_dir(dir);
+    let _held = lock_ledger(path);
     let mut seats = match load(path) {
         LedgerLoad::Missing => return Ok(()),
         LedgerLoad::Seats(seats) => seats,
@@ -138,6 +140,28 @@ pub fn forget(path: &Path, dir: &Path) -> Result<(), String> {
         return Ok(());
     }
     write(path, &seats)
+}
+
+/// The ledger's writer lock: an OS lock on `skill-seats.lock` beside the file, held across
+/// each load-change-write. Without it two writers (two panel requests on blocking threads, or
+/// the CLI and the gateway) load the same rows and the later write drops the other's seat; the
+/// temp-and-rename write only keeps the file whole. The OS releases the lock with its process.
+/// A directory that cannot hold the lock file leaves the write unlocked rather than refusing it.
+fn lock_ledger(path: &Path) -> Option<std::fs::File> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok()?;
+        }
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.with_extension("lock"))
+        .ok()?;
+    file.lock().ok()?;
+    Some(file)
 }
 
 pub fn same_dir(a: &Path, b: &Path) -> bool {
@@ -196,4 +220,42 @@ fn write(path: &Path, seats: &[LedgerSeat]) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
     }
     wrote.map_err(|err| err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writers_on_many_threads_keep_every_seat() {
+        let dir = std::env::temp_dir().join(format!("swiss-seats-{}", swiss_core::util::random_hex(8)));
+        let ledger = dir.join(FILE_NAME);
+        let threads: Vec<_> = (0..8)
+            .map(|t| {
+                let ledger = ledger.clone();
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    for i in 0..5 {
+                        remember(&ledger, SeatKind::Agents, &dir.join(format!("seat-{t}-{i}"))).expect("remember");
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("a writer thread");
+        }
+        let LedgerLoad::Seats(rows) = load(&ledger) else {
+            panic!("the ledger reads back");
+        };
+        assert_eq!(rows.len(), 40, "a concurrent write lost a seat");
+
+        let gone = dir.join("seat-0-0");
+        forget(&ledger, &gone).expect("forget");
+        let LedgerLoad::Seats(rows) = load(&ledger) else {
+            panic!("the ledger reads back");
+        };
+        assert_eq!(rows.len(), 39);
+        assert!(!rows.iter().any(|row| same_dir(Path::new(&row.dir), &gone)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
