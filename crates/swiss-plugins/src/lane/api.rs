@@ -175,7 +175,13 @@ async fn next_line(mut holder: Holder) -> Option<(Result<Bytes, Infallible>, Hol
         // wait below instead of being lost between the two.
         holder.changed.borrow_and_update();
         let seat = holder.lane.seat(holder.id);
-        if holder.last.as_ref() != Some(&seat) {
+        // Caps reach a command when it is admitted (SPEC §lane.config): once the running line
+        // went out, a new row's caps are not news to this holder, so it hears one running line.
+        let heard = match (&holder.last, &seat) {
+            (Some(Seat::Running { .. }), Seat::Running { .. }) => true,
+            (last, seat) => last.as_ref() == Some(seat),
+        };
+        if !heard {
             let (line, last) = match seat_line(holder.id, &seat) {
                 Some(line) => line,
                 // Done and gone: the caller reported its end, nothing more to say.

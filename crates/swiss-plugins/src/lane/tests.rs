@@ -196,6 +196,22 @@ fn a_release_frees_the_slot_and_tells_the_holder() {
 }
 
 #[test]
+fn a_released_holder_hears_released_after_its_row_left_the_recent_list() {
+    let lane = lane(1);
+    let a = lane.enter(ticket("stuck"), false);
+    assert!(lane.release(a));
+    for i in 0..=RECENT_MAX {
+        let id = lane.enter(ticket(&format!("c{i}")), false);
+        assert!(lane.finish(id, Some(0)));
+    }
+    assert!(lane.snapshot()["recent"].as_array().unwrap().iter().all(|row| row["id"] != a));
+    assert_eq!(lane.seat(a), Seat::Released);
+    // Its stream ends and the holder leaves; from then on the id is unknown.
+    lane.leave(a);
+    assert_eq!(lane.seat(a), Seat::Unknown);
+}
+
+#[test]
 fn a_resumed_command_runs_at_once_even_over_capacity() {
     let lane = lane(1);
     let a = lane.enter(ticket("a"), false);
@@ -407,6 +423,21 @@ async fn a_release_ends_the_lease_with_a_last_line() {
     let (status, body) = call(&app, "POST", &format!("/api/lane/{id}/release"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["code"], "lane.unknown");
+}
+
+#[tokio::test]
+async fn a_new_row_mid_run_sends_no_second_running_line() {
+    let (slot, app) = serving(1);
+    let mut first = lease(&app, "build").await;
+    let line = next(&mut first).await;
+    assert_eq!(line["state"], "running");
+    let id = line["id"].as_u64().unwrap();
+    slot.current().unwrap().apply(LaneConfig { capacity: 1, env: vec![] });
+    // Blank heartbeats are skipped, so a timeout means no line at all.
+    assert!(tokio::time::timeout(Duration::from_millis(300), first.next()).await.is_err());
+    let (status, _) = call(&app, "POST", &format!("/api/lane/{id}/release"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(next(&mut first).await["state"], "released");
 }
 
 #[tokio::test]

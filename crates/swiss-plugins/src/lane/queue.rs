@@ -21,7 +21,7 @@
 //! oldest waiters take the free slots. A holder learns its turn through [Lane::subscribe], a
 //! watch on the revision, and asks [Lane::seat] what the revision means for it.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::{json, Map, Value};
@@ -239,6 +239,10 @@ struct Inner {
     entries: Vec<Entry>,
     /// Newest first.
     recent: VecDeque<Finished>,
+    /// Released ids whose holder has not left yet. The holder's last line comes from here, not
+    /// from `recent`: RECENT_MAX more endings before the holder's stream looks again would cut
+    /// the row, and the stream would end without `released`, which the CLI reads as a drop.
+    released: HashSet<u64>,
     revision: u64,
     closed: bool,
 }
@@ -265,6 +269,7 @@ impl Lane {
                 next_id: 1,
                 entries: Vec::new(),
                 recent: VecDeque::new(),
+                released: HashSet::new(),
                 revision: 0,
                 closed: false,
             }),
@@ -303,11 +308,7 @@ impl Lane {
             return Seat::Closed;
         }
         let Some(at) = inner.entries.iter().position(|e| e.id == id) else {
-            let released = inner
-                .recent
-                .iter()
-                .any(|f| f.entry.id == id && f.outcome == Outcome::Released);
-            return if released { Seat::Released } else { Seat::Unknown };
+            return if inner.released.contains(&id) { Seat::Released } else { Seat::Unknown };
         };
         if inner.entries[at].started_at.is_some() {
             return Seat::Running { env: inner.config.env.clone() };
@@ -341,6 +342,8 @@ impl Lane {
     /// The caller's connection ended. A running command that never reported is `Gone`; a
     /// waiter simply leaves.
     pub fn leave(&self, id: u64) {
+        // A released holder's stream is over, so it no longer needs to hear `released`.
+        lock(&self.inner).released.remove(&id);
         self.remove(id, |entry| entry.started_at.is_some().then_some(Outcome::Gone));
     }
 
@@ -358,6 +361,10 @@ impl Lane {
         };
         let entry = inner.entries.remove(at);
         if let Some(outcome) = record(&entry) {
+            // Under the same lock as the removal, so no holder reads the gap between the two.
+            if outcome == Outcome::Released {
+                inner.released.insert(id);
+            }
             inner.recent.push_front(Finished { entry, ended_at: swiss_core::util::now_ms(), outcome });
             inner.recent.truncate(RECENT_MAX);
         }
@@ -377,6 +384,7 @@ impl Lane {
         let mut inner = lock(&self.inner);
         inner.closed = true;
         inner.entries.clear();
+        inner.released.clear();
         self.moved(&mut inner);
     }
 
