@@ -288,6 +288,7 @@ in §decisions.
 - [§llm.telemetry — Reporting agent runs](spec/0013-llm.md#llmtelemetry--reporting-agent-runs)
 - [§llm.history — The call and conversation record](spec/0013-llm.md#llmhistory--the-call-and-conversation-record)
 - [§llm.api — `/api/llm`](spec/0013-llm.md#llmapi--apillm)
+- [§llm.cli — `swiss agent`](spec/0013-llm.md#llmcli--swiss-agent)
 - [§llm.panel — The Providers, Embedding, Agents and History pages](spec/0013-llm.md#llmpanel--the-providers-embedding-agents-and-history-pages)
 - [§llm.roadmap — Not built yet](spec/0013-llm.md#llmroadmap--not-built-yet)
 

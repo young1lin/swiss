@@ -178,6 +178,10 @@ On Windows or macOS, double-click the app or run swiss without arguments to open
                    wait for a free slot in the machine-wide lane for heavy work (builds,
                    test suites), then run the command here with the lane's caps; `lane`
                    alone shows the queue (swiss lane help)
+  agent run [--agent NAME] [--write DIR]... [--prompt TEXT | --prompt-file FILE|-]
+                   one task for a builtin agent with nobody at the panel: it reads in this
+                   directory, writes only in the --write directories, and shows live in
+                   History (swiss agent help)
   api <METHOD> <path> [json | --body-file <path|->]
                    one admin API call, signed with this machine's CLI key (SPEC §host.session) -
                    what a script uses instead of curl; prints the JSON answer. --body-file reads
@@ -1413,6 +1417,8 @@ pub async fn main(argv: Vec<String>) -> i32 {
         Some("lane") => return crate::lane_cli::main(argv[1..].to_vec()).await,
         // One read across every module; refuses a flag it does not know (SPEC §lane.brief).
         Some("brief") => return crate::brief_cli::main(argv[1..].to_vec()).await,
+        // A task text is free-form; `agent run` parses its own flags strictly (SPEC §llm.cli).
+        Some("agent") => return crate::agent_cli::main(argv[1..].to_vec()).await,
         _ => {}
     }
     run(&argv, &PrintIo, &RealOps).await

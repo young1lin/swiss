@@ -21,6 +21,7 @@
 //! terminal, remote, process, memory and llm live in swiss-plugins, which only this crate names.
 
 pub mod adminapi;
+pub mod agent_cli;
 pub mod app;
 pub mod autostart;
 pub mod brief_cli;
