@@ -31,6 +31,8 @@ export interface ApiBuildInfo {
   version?: string;
   /** The rustc target triple. Absent on an older gateway. */
   target?: string;
+  /** The release channel (`release`, `dev`, ...). Absent on an older gateway. */
+  channel?: string;
 }
 
 export interface ApiInfoResponse {
@@ -120,8 +122,12 @@ export interface ApiSkillStatus {
 export interface ApiSkillsResponse {
   seats?: ApiSkillSeat[];
   skills?: ApiSkillStatus[];
+  /** Present only when skill-seats.json cannot be parsed: its seats are then missing above. */
+  ledger?: { path: string; error: string };
   replaced?: string[];
   failed?: string[];
+  /** POST /api/skills/refresh only: a missing seat or an unparseable ledger, left as it was. */
+  skipped?: string[];
 }
 
 export type MachineSettingKey = "autostart" | "user-path";

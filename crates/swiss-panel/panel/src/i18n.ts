@@ -171,6 +171,7 @@ const SERVED_CODES: Record<string, string> = {
   "skills.unknownDir": tk("served.skillsUnknownDir"),
   "skills.seatInvalid": tk("served.skillsSeatInvalid"),
   "skills.seatDefault": tk("served.skillsSeatDefault"),
+  "skills.unknownSkill": tk("served.skillsUnknownSkill"),
   "update.devBuild": tk("served.updateDevBuild"),
   "update.bundle": tk("served.updateBundle"),
   "update.readOnly": tk("served.updateReadOnly"),

@@ -418,6 +418,46 @@ describe("Settings → System About", () => {
     expect(text).not.toContain("MB");
   });
 
+  it("clears Updating without a notice: status is re-read while an update shows, through a failed read", async () => {
+    let failNext = false;
+    statusReply = () => {
+      if (failNext) {
+        failNext = false;
+        return Promise.reject(new Error("gateway restarting"));
+      }
+      return Promise.resolve(jsonResponse(200, {
+        channel: "release", canApply: false, refusal: null, running: true, last: null,
+      }));
+    };
+    vi.useFakeTimers();
+    try {
+      await system.mount();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(document.querySelector("[data-about-update]")?.getAttribute("data-about-update")).toBe("updating");
+      // The gateway is down mid-swap: that read fails, and the next one is still scheduled.
+      failNext = true;
+      const before = statusHits();
+      await vi.advanceTimersByTimeAsync(about.UPDATE_POLL_MS + 500);
+      expect(statusHits()).toBe(before + 1);
+      expect(failNext).toBe(false);
+      // The rolled-back gateway is the same build, so nothing reloads and no notice comes.
+      statusReply = () => Promise.resolve(jsonResponse(200, {
+        channel: "release", canApply: true, refusal: null, running: false,
+        last: { ok: false, phase: "health", error: "hash mismatch", rolledBack: true },
+      }));
+      await vi.advanceTimersByTimeAsync(about.UPDATE_POLL_MS + 500);
+      expect(document.querySelector("[data-about-update]")?.getAttribute("data-about-update")).toBe("idle");
+      expect(document.querySelector("[data-about-update]")?.textContent).toContain("(rolled back)");
+      // Settled: no further reads on a timer.
+      const settled = statusHits();
+      await vi.advanceTimersByTimeAsync(about.UPDATE_POLL_MS * 3);
+      expect(statusHits()).toBe(settled);
+      expect(updateHits()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops reading status after the page is left", async () => {
     await system.mount();
     await vi.waitFor(() => { expect(statusHits()).toBe(1); });

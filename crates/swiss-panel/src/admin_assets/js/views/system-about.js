@@ -18,7 +18,8 @@
  * gateway info WELCOME already loaded. The update check runs only when the operator clicks,
  * and a 503 — a composition with no checker — removes that row until the page is left.
  * Apply is offered only when status says canApply; a refusal is the sentence instead.
- * HOST.UPDATE and WELCOME re-read status. Leaving the page drops the subscription.
+ * HOST.UPDATE and WELCOME re-read status, and so does a timer while "Updating…" shows.
+ * Leaving the page drops the subscription and the timer.
  * Diagnostics are English on purpose: they are pasted into a bug report, and they carry
  * counts and states only. */
 import { h } from "../h.js";
@@ -71,6 +72,27 @@ let applyTicket = 0;
 let statusView             = { canApply: false, refusal: null, running: false, last: null };
 let updateWatch                      = null;
 let statusBurst                              = null;
+let pollTimer                                       = null;
+
+/** How often status is re-read while "Updating…" shows. HOST.UPDATE comes only from a gateway
+ *  that spawned the updater and is still running, so an update that replaced that gateway,
+ *  rolled back to the same build, or ran from a terminal never sends one. */
+export const UPDATE_POLL_MS = 3000;
+
+function stopPoll()       {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = null;
+}
+
+/** One re-read a poll period from now, while an update shows and the page watches. A read
+ *  that fails (the gateway is down mid-swap) schedules the next one all the same. */
+function keepPolling()       {
+  if (pollTimer || !updateWatch || !(statusView.running || awaiting)) return;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    statusBurst?.push();
+  }, UPDATE_POLL_MS);
+}
 
 function megabytes(bytes        )         {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -300,6 +322,7 @@ async function applyUpdate(kept                                                 
     awaiting = true;
     phase = { kind: "newer", ...kept };
     paintAbout();
+    keepPolling();
     return;
   }
   const body          = await response.json().catch(()          => null);
@@ -321,6 +344,14 @@ function parseStatus(body         )                    {
 }
 
 async function readStatus()                {
+  try {
+    await readStatusOnce();
+  } finally {
+    keepPolling();
+  }
+}
+
+async function readStatusOnce()                {
   const ticket = statusGen;
   const seenApply = applyTicket;
   const wasAwaiting = awaiting;
@@ -363,6 +394,7 @@ export function watchAbout()       {
 /** Drop the HOST.UPDATE subscription when System is left. */
 export function unwatchAbout()       {
   statusGen++;
+  stopPoll();
   updateWatch?.();
   updateWatch = null;
 }
@@ -471,6 +503,7 @@ export function handleAboutClick(target         )          {
 }
 
 export function resetAbout()       {
+  stopPoll();
   updateGen++;
   statusGen++;
   applyTicket++;

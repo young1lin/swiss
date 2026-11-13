@@ -96,7 +96,8 @@ impl Gateway for FakeGate {
         if *self.skills_ok.lock().unwrap() {
             Ok("skills: 1 copies refreshed in 1 seats".to_string())
         } else {
-            Err("warning: skill refresh exited 1 - the update itself succeeded".to_string())
+            Err(super::apply::refresh_warning(1, "could not install swiss in .claude: denied
+"))
         }
     }
 }
@@ -215,6 +216,11 @@ async fn a_failed_skill_refresh_still_exits_zero() {
     let outcome = apply(&env_at(&dir, &exe, "release", false), &fetch, &gate).await;
     assert_eq!(outcome.code, 0, "{:?}", outcome.lines);
     assert!(outcome.lines.iter().any(|line| line.contains("warning: skill refresh")));
+    assert!(
+        outcome.lines.iter().any(|line| line == "  could not install swiss in .claude: denied"),
+        "the child's stderr names the copy that failed: {:?}",
+        outcome.lines
+    );
     assert_eq!(std::fs::read(&exe).unwrap(), new);
     assert_eq!(gate.starts.lock().unwrap().as_slice(), &[exe.clone()]);
     let _ = std::fs::remove_dir_all(&dir);
@@ -567,6 +573,55 @@ async fn an_unreadable_lock_pid_is_stale_and_the_fetch_runs() {
     assert!(fetch.hits.load(Ordering::SeqCst) >= 1, "a stale lock must not skip the manifest");
     assert!(outcome.lines.iter().all(|line| !line.contains("update.lock")), "{:?}", outcome.lines);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_update_guard_admits_one_holder_and_an_empty_pid_file_does_not_let_a_second_in() {
+    let dir = std::env::temp_dir().join(format!("swiss-guard-{}", swiss_core::util::random_hex(6)));
+    let update = dir.join("update");
+    let first = super::apply::take_lock(&update).expect("the first updater takes the lock");
+    // The window a create-then-write lock had: the pid file is there but still empty.
+    std::fs::write(update.join("update.lock"), b"").unwrap();
+    let second = super::apply::take_lock(&update);
+    assert!(second.is_err(), "a second updater must not get in while the first holds the guard");
+    assert!(update.join("update.lock").exists(), "a refused taker leaves the holder's pid file");
+    drop(first);
+    assert!(!update.join("update.lock").exists(), "the holder removes its pid file");
+    let third = super::apply::take_lock(&update).expect("the lock is free once the holder is gone");
+    assert_eq!(
+        std::fs::read_to_string(update.join("update.lock")).unwrap(),
+        std::process::id().to_string()
+    );
+    drop(third);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_child_past_its_budget_is_stopped_and_a_failure_keeps_its_stderr() {
+    let command = if cfg!(windows) {
+        let mut command = std::process::Command::new("ping");
+        command.args(["-n", "30", "127.0.0.1"]);
+        command
+    } else {
+        let mut command = std::process::Command::new("sleep");
+        command.arg("30");
+        command
+    };
+    let started = std::time::Instant::now();
+    let err = super::apply::run_bounded(command, std::time::Duration::from_millis(300)).err().expect("a hung child is stopped");
+    assert!(err.contains("did not finish"), "{err}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "the wait is bounded");
+
+    let warning = super::apply::refresh_warning(1, "could not install a in .claude: denied
+
+could not check b: busy
+");
+    let lines: Vec<&str> = warning.lines().collect();
+    assert_eq!(lines, [
+        "warning: skill refresh exited 1 - the update itself succeeded",
+        "  could not install a in .claude: denied",
+        "  could not check b: busy",
+    ]);
 }
 
 #[test]

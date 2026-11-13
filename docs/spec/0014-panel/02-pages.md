@@ -238,7 +238,10 @@ never shown again, and a forgotten one is re-stored, never revealed.
   previous attempt, including a failure and "(rolled back)", and "already the newest" for one
   that found nothing to install. The page subscribes to
   `HOST.UPDATE` while mounted, re-reads status on that notice and on WELCOME, and drops
-  the subscription when the page is left.
+  the subscription when the page is left. While "Updating…" shows it also re-reads status
+  every few seconds: the notice comes only from a gateway that spawned the updater and still
+  runs, so an update that replaced that gateway, rolled back to the same build, or ran from a
+  terminal would otherwise never clear. That read never checks or applies.
   **Diagnostics** copies counts and states only — no names, paths, hostnames, tokens, or
   connection strings — and a failed read is that line's `unavailable`.
 - **This machine** holds start at sign-in (`/api/autostart`) and swiss on the user's PATH
@@ -250,7 +253,9 @@ never shown again, and a forgotten one is re-stored, never revealed.
   A `missing` ledger seat says "folder missing", offers Forget, and has no install button.
   When any copy is outdated the section shows "{n} outdated" and **Update all**, which
   `POST`s `/api/skills/refresh` only on that click. **Add Claude config directory** records
-  a seat and shows the served reason on 400. The page never installs or refreshes on mount
+  a seat and shows the served reason on 400; an install or Forget refusal is the served
+  reason too (`servedError`). A `ledger` note (an unparseable `skill-seats.json`) shows above
+  the tables, naming the file, since its seats are missing from them. The page never installs or refreshes on mount
   or Refresh. A download action installs or updates only that skill in that seat through
   `POST /api/skills/install` (`{name, root}` for a default seat, `{name, dir}` for a recorded
   one). Only that cell is disabled during the write. Errors retain the prior status,

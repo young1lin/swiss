@@ -365,7 +365,7 @@ pub async fn apply(env: &ApplyEnv, fetch: &dyn Fetch, gate: &dyn Gateway) -> Out
 
     match gate.refresh_skills(&env.exe) {
         Ok(line) => lines.push(line),
-        Err(warning) => lines.push(warning),
+        Err(warning) => lines.extend(warning.lines().map(str::to_string)),
     }
     drop(lock);
     write_last(
@@ -424,39 +424,50 @@ fn same_exe(record: &Path, exe: &Path) -> bool {
     }
 }
 
-struct Lock(PathBuf);
+/// The updater's exclusive hold. `_guard` carries an OS lock on `update.guard`, which the OS
+/// drops when the process dies, so two updaters can never both pass `take_lock` and no stale
+/// state needs judging. `update.lock` only names the holder's pid for status readers
+/// (`held_lock_pid`); it is written and removed by the guard holder alone.
+pub(crate) struct Lock {
+    pid_file: PathBuf,
+    _guard: std::fs::File,
+}
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        // Removed before the guard closes: no other updater can write it in between.
+        let _ = std::fs::remove_file(&self.pid_file);
     }
 }
 
-fn take_lock(dir: &Path) -> Result<Lock, String> {
+pub(crate) fn take_lock(dir: &Path) -> Result<Lock, String> {
     std::fs::create_dir_all(dir).map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
-    let path = dir.join("update.lock");
-    for _ in 0..2 {
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                use std::io::Write;
-                let _ = write!(file, "{}", std::process::id());
-                return Ok(Lock(path));
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                // A pid that cannot be read is stale, same as a dead one.
-                let held = std::fs::read_to_string(&path)
-                    .ok()
-                    .and_then(|text| text.trim().parse::<u32>().ok())
-                    .is_some_and(|pid| pid != std::process::id() && swiss_core::platform::pid_alive(pid));
-                if held {
-                    return Err("another update holds update.lock".to_string());
-                }
-                let _ = std::fs::remove_file(&path);
-            }
-            Err(err) => return Err(format!("cannot take update.lock: {err}")),
-        }
+    let guard_path = dir.join("update.guard");
+    let guard = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&guard_path)
+        .map_err(|err| format!("cannot take update.lock: {err}"))?;
+    match guard.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Err("another update holds update.lock".to_string()),
+        Err(std::fs::TryLockError::Error(err)) => return Err(format!("cannot take update.lock: {err}")),
     }
-    Err("cannot take update.lock".to_string())
+    let pid_file = dir.join("update.lock");
+    // A live pid in the file that is not ours is an updater that holds no guard (one started
+    // by a build from before the guard): leave it alone. A dead or unreadable pid is a
+    // leftover, and holding the guard makes overwriting it safe.
+    let foreign = std::fs::read_to_string(&pid_file)
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+        .is_some_and(|pid| pid != std::process::id() && swiss_core::platform::pid_alive(pid));
+    if foreign {
+        return Err("another update holds update.lock".to_string());
+    }
+    std::fs::write(&pid_file, std::process::id().to_string()).map_err(|err| format!("cannot take update.lock: {err}"))?;
+    Ok(Lock { pid_file, _guard: guard })
 }
 
 fn write_last(env: &ApplyEnv, from: &str, to: &str, via: &str, bytes: u64, ok: bool, phase: &str, error: Option<String>, rolled_back: bool, started: &str) {
@@ -583,16 +594,79 @@ fn probe_version(exe: &Path) -> Result<String, String> {
     }
 }
 
+/// How long `skill install --installed` may run. It copies a few small files per seat, and
+/// the update lock is held while it runs, so a hung refresh must not hold it for good.
+const SKILL_REFRESH_BUDGET: Duration = Duration::from_secs(60);
+
 fn refresh_skills(exe: &Path) -> Result<String, String> {
-    let out = std::process::Command::new(exe)
-        .args(["skill", "install", "--installed"])
-        .output()
-        .map_err(|err| format!("warning: skill refresh could not start: {err}"))?;
-    if !out.status.success() {
-        let code = out.status.code().unwrap_or(1);
-        return Err(format!("warning: skill refresh exited {code} - the update itself succeeded"));
+    let mut command = std::process::Command::new(exe);
+    command.args(["skill", "install", "--installed"]);
+    let ran = run_bounded(command, SKILL_REFRESH_BUDGET).map_err(|err| format!("warning: skill refresh {err} - the update itself succeeded"))?;
+    if !ran.status.success() {
+        return Err(refresh_warning(ran.status.code().unwrap_or(1), &ran.stderr));
     }
-    Ok(skills_line(&String::from_utf8_lossy(&out.stdout)))
+    Ok(skills_line(&ran.stdout))
+}
+
+/// The failed refresh's warning, then each line the child wrote to stderr: the CLI names
+/// every copy it could not replace there. `apply` splits it into outcome lines.
+pub(crate) fn refresh_warning(code: i32, stderr: &str) -> String {
+    let mut text = format!("warning: skill refresh exited {code} - the update itself succeeded");
+    for line in stderr.lines().map(str::trim_end).filter(|line| !line.trim().is_empty()) {
+        text.push_str("\n  ");
+        text.push_str(line.trim_start());
+    }
+    text
+}
+
+pub(crate) struct Ran {
+    pub status: std::process::ExitStatus,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Run a child to completion within `budget`, killing it past that. Both pipes drain on their
+/// own threads, so a child that writes a lot never stalls on a full pipe.
+pub(crate) fn run_bounded(mut command: std::process::Command, budget: Duration) -> Result<Ran, String> {
+    let mut child = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("could not start: {err}"))?;
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed() > budget => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("did not finish in {} s and was stopped", budget.as_secs_f32()));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(err) => {
+                let _ = child.kill();
+                return Err(format!("could not be waited on: {err}"));
+            }
+        }
+    };
+    Ok(Ran {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
+fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    })
 }
 
 fn skills_line(stdout: &str) -> String {

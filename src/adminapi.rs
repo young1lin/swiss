@@ -821,7 +821,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         let outcome = match (target.root, target.dir) {
             (Some(root), None) => {
                 if !crate::skill_install::valid_target(&name, &root) {
-                    return admin_error(StatusCode::BAD_REQUEST, "unknown skill or skill directory");
+                    let code = if crate::skill_install::shipped_names().contains(&name) { "skills.unknownDir" } else { "skills.unknownSkill" };
+                    return admin_error_code(StatusCode::BAD_REQUEST, code, "unknown skill or skill directory");
                 }
                 tokio::task::spawn_blocking(move || {
                     let places = crate::skill_install::Places::of_this_user()?;
@@ -842,7 +843,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 admin_error_code(StatusCode::BAD_REQUEST, "skills.unknownDir", &error)
             }
             Ok(Err(error)) if error.starts_with("unknown skill") => {
-                admin_error(StatusCode::BAD_REQUEST, &error)
+                admin_error_code(StatusCode::BAD_REQUEST, "skills.unknownSkill", &error)
             }
             Ok(Err(error))
                 if error.contains("was not changed") || error.starts_with(crate::skill_install::MISSING_SEAT) =>
@@ -860,6 +861,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             let mut body = crate::skill_install::inspection(&places);
             body["replaced"] = json!(refresh.replaced);
             body["failed"] = json!(refresh.failed);
+            body["skipped"] = json!(refresh.skipped);
             Ok::<_, String>(body)
         }).await {
             Ok(Ok(body)) => admin_json(StatusCode::OK, body),

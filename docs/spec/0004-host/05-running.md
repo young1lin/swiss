@@ -107,7 +107,8 @@ dispatch; `gui --help` and `gui --version` finish without opening a window.
   `swiss --version` prints `swiss <version> (<hash>, <time>)` and does not include the target.
   At boot a background task deletes `<exe>.old` and `<exe>.old.*` beside the binary. It
   skips that delete while `<data dir>/update/update.lock` names a live pid, because that
-  updater still owns the parked exe. A lock whose pid cannot be read is stale.
+  updater still owns the parked exe. A lock whose pid cannot be read is stale for this check;
+  updaters exclude each other through `update.guard` (§host.cli), not through this file.
 - **Logs.** JSON lines `{ts, level, msg, extra?}` on stderr, redirected by the daemon into
   `gateway-<port>.log`, rotated at 10 MB keeping one generation. Stdout belongs to the command, so
   a state migration that logs during `swiss export` or `swiss api` cannot reach a redirected

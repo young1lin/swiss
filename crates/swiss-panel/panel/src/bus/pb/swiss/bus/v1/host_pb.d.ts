@@ -370,7 +370,7 @@ export declare const MemoryIdSchema: GenEnum<MemoryId>;
 
 /**
  * HOST.UPDATE (SPEC §bus.registry, ADR-041). Module 4, sub 7.
- * A NOTICE: an apply was accepted or the short-lived updater exited. The About
+ * A NOTICE: the short-lived updater this gateway spawned exited. The About
  * page re-reads GET /api/update/status. The body is empty.
  *
  * @generated from enum swiss.bus.v1.UpdateId
