@@ -6,6 +6,33 @@ swiss 的所有显著变更都记录在此;格式遵循 [Keep a Changelog](https
 
 ## [未发布]
 
+## [0.2.3] - 2026-11-15
+
+### 新增
+
+- Lane,本机共用的重任务队列(SPEC §lane):`swiss lane run -- <命令>` 等到一个空位,按配置行设定的上限、
+  以调用者自己的环境运行命令(默认一次一个),输出保留在 `~/.swiss/lane`;Lane 页显示在跑的、在等的和
+  已完成的;`swiss brief` 告诉初来的编码代理这台机器能提供什么。
+- `swiss agent run`,把一个任务交给内置 agent,面板前无人值守(SPEC §llm):它读取、grep、glob 工作目录,
+  只写命令指定的目录,从不打开凭证名文件,读到的内容先脱敏再发往模型。
+- 面板的界面大小(SPEC §panel.scale):一个按浏览器记忆的系数,把样式表写下的每个长度一起缩放 —— 90% 到
+  175% —— 文字、行距、列宽一起长大,而不是浏览器把页面 zoom 进另一套坐标系。
+- 发布为每个 target 附一份 zstd 全量档;补丁不超过全量 60% 时,附此前三个版本的补丁,以及指名它们的
+  `update.json`(SPEC §release.ci)。
+- `swiss update --apply` 从一个短命进程安装更新的版本:本地 exe 命中某个补丁就走 zstd 补丁,否则用全量档,
+  随后重启网关(ADR-041,SPEC §host.cli)。
+- 设置 → 系统可以发起这次更新。按钮说清下载的是什么,确认页说明打开的终端与进行中的运行会结束,该行报告
+  最近一次尝试的结果(SPEC §panel.settings)。
+- 设置 → 系统以"关于"开头:正在运行的版本、构建提交与时间,一个只在被要求时才去查的 GitHub 新版本检查,
+  以及一份只计数插件、MCP 和内存、不点名任何东西的诊断复制(SPEC §panel.pages,SPEC §host.cli)。
+- Skill 座位:一次安装记下它写入的目录,`swiss skill install --installed` 与设置 → 系统刷新每一个记录在案的
+  目录,`swiss status` 在有过期副本时点名;部署后跑一次刷新,失败只算警告(SPEC §host.cli,SPEC §panel.settings,
+  SPEC §host.ops)。
+
+### 修复
+
+- 设置 → 系统跟随一次安装记录的 Claude 配置目录,而不是只认网关进程自己启动时的目录。
+
 ## [0.2.2] - 2026-11-12
 
 ### 新增

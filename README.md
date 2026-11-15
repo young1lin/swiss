@@ -60,6 +60,9 @@ swiss status           # check whether a gateway is already running
 swiss start            # start the gateway on 127.0.0.1:19999 and open the panel
 swiss token            # the bearer token an MCP client authenticates with
 swiss creds            # panel URL + token, ready to paste into a client
+swiss brief            # what this machine offers an arriving agent: MCP servers, the lane, remotes
+swiss lane run -- cargo test -j 4   # a heavy command waits for the lane's machine-wide slot, then runs
+swiss agent run "fix the failing test"   # one task for a builtin agent, headless: it reads, edits, reports
 ```
 
 The opt-in [`swiss` skill](src/skill_assets/SKILL.md) covers safe installation, checksum

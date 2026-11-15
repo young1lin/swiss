@@ -6,8 +6,22 @@ All notable changes to swiss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-15
+
 ### Added
 
+- The lane, a machine-wide queue for heavy commands (SPEC §lane): `swiss lane run -- <cmd>`
+  waits for a free slot, then runs the command as the caller's own with the caps a config row
+  set — one at a time by default — and keeps its output under `~/.swiss/lane`; the Lane page
+  shows what runs, what waits and what finished; and `swiss brief` tells an arriving agent
+  what this machine offers.
+- `swiss agent run`, one task for a builtin agent with nobody at the panel (SPEC §llm): it
+  reads, greps and globs the working directory, writes only inside the directories the
+  command named, never opens a credential-named file, and what it reads is redacted before
+  it travels.
+- The panel's interface size (SPEC §panel.scale): one factor, remembered per browser, scales
+  every length the stylesheets write — 90% to 175% — so the type, the rows and the columns
+  grow together instead of the browser zooming the page under them.
 - A release publishes a zstd full archive for each target and, when the patch is at most 60%
   of that archive, patches from the previous three releases, plus `update.json` naming them
   (SPEC §release.ci).
