@@ -73,14 +73,22 @@ def extract_named(archive: str, name: str, dest: str) -> None:
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     if archive.endswith(".zip"):
         with zipfile.ZipFile(archive) as bundle:
-            member = next((item for item in bundle.namelist() if member_name(item) == name), None)
+            member = next(
+                (item for item in bundle.namelist() if not item.endswith("/") and member_name(item) == name),
+                None,
+            )
             if member is None:
                 raise SystemExit(f"{archive} has no {name}")
             dest_path.write_bytes(bundle.read(member))
         return
     if archive.endswith(".tar.gz") or archive.endswith(".tgz"):
         with tarfile.open(archive, "r:gz") as bundle:
-            member = next((item for item in bundle.getmembers() if member_name(item.name) == name), None)
+            # A directory can share the basename (skills/swiss next to swiss), and the
+            # archiver's order decides which matches first: only a regular file is the exe.
+            member = next(
+                (item for item in bundle.getmembers() if item.isfile() and member_name(item.name) == name),
+                None,
+            )
             if member is None:
                 raise SystemExit(f"{archive} has no {name}")
             extracted = bundle.extractfile(member)

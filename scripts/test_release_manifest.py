@@ -108,6 +108,34 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(previous_tags(names, "v0.2.3"), ["v0.2.2", "v0.2.1", "v0.2.0"])
         self.assertEqual(previous_tags(["v0.3.0"], "v0.2.3"), [])
 
+    def test_extract_named_skips_a_directory_that_shares_the_basename(self):
+        # The arm runner's tar ordered skills/swiss before swiss; the directory's basename
+        # matched first, extractfile answered None, and the release step died naming the
+        # file it had just found. Only a regular file may match, whatever the order.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tar_path = root / "swiss.tar.gz"
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+                folder = tarfile.TarInfo("skills/swiss")
+                folder.type = tarfile.DIRTYPE
+                archive.addfile(folder)
+                payload = b"elf-exe"
+                info = tarfile.TarInfo("swiss")
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+            tar_path.write_bytes(buffer.getvalue())
+            extracted = root / "swiss"
+            extract_named(str(tar_path), "swiss", str(extracted))
+            self.assertEqual(extracted.read_bytes(), b"elf-exe")
+            bundle = root / "swiss.zip"
+            with zipfile.ZipFile(bundle, "w") as archive:
+                archive.writestr("skills/swiss/", b"")
+                archive.writestr("swiss", b"zip-exe")
+            zipped = root / "out"
+            extract_named(str(bundle), "swiss", str(zipped))
+            self.assertEqual(zipped.read_bytes(), b"zip-exe")
+
     def test_extract_named_reads_zip_and_tar_members(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
