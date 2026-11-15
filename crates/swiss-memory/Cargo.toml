@@ -29,7 +29,7 @@ async-trait = "0.1"
 # DSH writes its session logs as concatenated zstd frames by default (SPEC §memory.sync
 # Conversations); decoding them is the one thing it is here for. No default features:
 # no legacy formats and no dictionary builder.
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
