@@ -1293,6 +1293,11 @@ mod tests {
         let dir = log.dir().to_path_buf();
         let hook_dir = dir.clone();
         log.set_calls_notice(Some(std::sync::Arc::new(move |name| {
+            // The test log is one shared singleton (test_log): parallel tests publish notices
+            // for their own MCP names through this same hook, so only ours counts here.
+            if name != mcp {
+                return;
+            }
             hits_hook.fetch_add(1, Ordering::SeqCst);
             let text = std::fs::read_to_string(hook_dir.join(format!("{name}.jsonl"))).unwrap_or_default();
             *body_hook.lock().unwrap_or_else(|e| e.into_inner()) = text;
