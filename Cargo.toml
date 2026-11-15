@@ -116,7 +116,7 @@ hmac = { version = "0.13", default-features = false }
 sha2 = { version = "0.11", default-features = false }
 # zstd patches for `swiss update --apply` (ADR-041). Same crate and features as
 # swiss-memory, so the graph stays one zstd. Only the short-lived CLI decodes.
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # reqwest on Windows: native-tls = schannel — pure Rust, the OS trust store; rustls would pull
