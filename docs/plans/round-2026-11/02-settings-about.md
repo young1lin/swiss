@@ -156,7 +156,7 @@ names.
 - SPEC §panel.settings (`docs/spec/0014-panel/02-pages.md`, the System page): an About section
   first, its three rows, "checked only on click", the diagnostics content rule.
 - SPEC §host.cli / `update`: the panel's check shares the CLI's source; the route and its codes.
-- SPEC wherever `/api/info`'s `build` object is described (§host.daemon or §panel.api — grep
+- SPEC wherever `/api/info`'s `build` object is described (§host.daemon or §host.routes — grep
   `panelVersion`): the two new fields.
 - README Quick start's "Settings → System shows …" sentence gains "the version and build".
 - CHANGELOG `[Unreleased]`: one Added entry.

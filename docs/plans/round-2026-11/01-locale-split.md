@@ -88,7 +88,7 @@ migration: the locale tables are split into locales/en/ and locales/zh/" when
 
 ## 6. Text that changes in the same commit
 
-- AGENTS.md, §The panel / Making changes: "English lives in `panel/src/locales/en.ts` and
+- AGENTS.md, "The panel" / "Making changes": "English lives in `panel/src/locales/en.ts` and
   every other locale (currently `zh.ts`) carries the same keys" → English lives in
   `panel/src/locales/en/*.ts` (one file per area, `en.ts` is the barrel), `zh/` carries the
   same files and keys.

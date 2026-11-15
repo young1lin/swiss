@@ -200,7 +200,7 @@ agents use. **No test, and no live walk, may write them.**
   each from the env plus the seats recorded by installs and `seat add`; the ledger file; the
   refresh covers every seat; `swiss status`'s outdated line. The "no boot or panel load
   refreshes" sentence stays verbatim.
-- SPEC §formats (wherever home files are listed): `skill-seats.json`, plain, not sealed.
+- SPEC §core.home (the data directory's file list): `skill-seats.json`, plain, not sealed.
 - SPEC §panel.settings: the per-seat tables, Update all, Add, Forget.
 - README: the install paragraph ("A skill goes to …") and the Update section's skill line
   ("refreshes every copy swiss has installed, in every Claude config directory it has seen").
