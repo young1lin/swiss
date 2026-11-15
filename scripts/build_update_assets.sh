@@ -71,7 +71,7 @@ while read -r target exe ext; do
     rm -rf "$olddir"
     zstd -19 --long=27 --patch-from="${patchdir}/from.exe" -f "${SRC}/${target}/exe" -o "${patchdir}/patch.zst"
     decoded="$(mktemp)"
-    zstd -d --long=27 --patch-from="${patchdir}/from.exe" -o "$decoded" "${patchdir}/patch.zst"
+    zstd -d --long=27 --patch-from="${patchdir}/from.exe" -f -o "$decoded" "${patchdir}/patch.zst"
     cmp "$decoded" "${SRC}/${target}/exe"
     rm -f "$decoded"
     printf '%s\n' "swiss-${from_ver}-to-${VERSION}-${target}.patch.zst" > "${patchdir}/asset"
