@@ -669,10 +669,7 @@ impl TrafficLog {
                 return false;
             }
         }
-        if q.actions_only && !ACTION_METHODS.contains(&e.method.as_str()) {
-            return false;
-        }
-        true
+        !q.actions_only || ACTION_METHODS.contains(&e.method.as_str())
     }
 }
 
