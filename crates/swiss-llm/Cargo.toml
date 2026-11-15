@@ -26,7 +26,7 @@ async-trait = "0.1"
 # owners already carry - nothing new enters the binary.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # Maintained SSE grammar already locked through rmcp; no new package, TLS or runtime.
-sse-stream = { version = "0.2.6", default-features = false }
+sse-stream = { version = "0.3.0", default-features = false }
 # The embedding fingerprint's endpoint hash; already in the tree through swiss-core.
 sha2 = { version = "0.11", default-features = false }
 # The llm history owner (SPEC §llm.history) writes logs/llm.db itself: every module-owned
