@@ -222,7 +222,7 @@ async fn a_failed_skill_refresh_still_exits_zero() {
         outcome.lines
     );
     assert_eq!(std::fs::read(&exe).unwrap(), new);
-    assert_eq!(gate.starts.lock().unwrap().as_slice(), &[exe.clone()]);
+    assert_eq!(gate.starts.lock().unwrap().as_slice(), std::slice::from_ref(&exe));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

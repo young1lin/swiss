@@ -63,6 +63,12 @@ impl InFlight {
     }
 }
 
+impl Default for InFlight {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The panel never forces: a dev build, the same version and a downgrade stay refused, and
 /// `--force` is the terminal's (ADR-041).
 #[async_trait]

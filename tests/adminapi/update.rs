@@ -252,21 +252,24 @@ async fn a_running_updater_blocks_a_second_apply_and_publishes_when_it_exits() {
     fake.release_child();
     let published = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            let guard = run.lock().unwrap();
-            let Some(inflight) = guard.as_ref() else {
-                drop(guard);
-                tokio::task::yield_now().await;
-                continue;
-            };
-            let notes = inflight.published();
-            if notes.iter().any(|(sub, id)| {
-                *sub == swiss_bus::pb::v1::HostSub::Update as u32
-                    && *id == swiss_bus::pb::v1::UpdateId::UpdateChanged as u32
-            }) {
-                assert!(!inflight.running());
+            // The lock covers only the read; the await below sits outside its scope.
+            let mut landed = false;
+            {
+                let guard = run.lock().unwrap();
+                if let Some(inflight) = guard.as_ref() {
+                    let notes = inflight.published();
+                    if notes.iter().any(|(sub, id)| {
+                        *sub == swiss_bus::pb::v1::HostSub::Update as u32
+                            && *id == swiss_bus::pb::v1::UpdateId::UpdateChanged as u32
+                    }) {
+                        assert!(!inflight.running());
+                        landed = true;
+                    }
+                }
+            }
+            if landed {
                 return;
             }
-            drop(guard);
             tokio::task::yield_now().await;
         }
     })

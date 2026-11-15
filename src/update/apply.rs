@@ -470,6 +470,9 @@ pub(crate) fn take_lock(dir: &Path) -> Result<Lock, String> {
     Ok(Lock { pid_file, _guard: guard })
 }
 
+// One flat `last.json` dump: the ten fields are the record itself, and a struct here would
+// only carry the same ten from every call site to this one writer.
+#[allow(clippy::too_many_arguments)]
 fn write_last(env: &ApplyEnv, from: &str, to: &str, via: &str, bytes: u64, ok: bool, phase: &str, error: Option<String>, rolled_back: bool, started: &str) {
     let path = env.data_dir.join("update").join("last.json");
     if let Some(parent) = path.parent() {

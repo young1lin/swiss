@@ -79,12 +79,16 @@ fn setup_machine(user_path: FakeUserPath) -> Harness {
     })
 }
 
+/// Serializes the tests that touch the shared skill directories on disk. A taker holds it
+/// for the whole test, across its awaits - that breadth is the point - so each carries
+/// `#[allow(clippy::await_holding_lock)]`.
 fn skill_files_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn shipped_skill_status_is_read_only_and_reports_both_roots() {
     let _guard = skill_files_lock();
     let h = setup_machine(FakeUserPath::default());
@@ -109,6 +113,7 @@ async fn shipped_skill_status_is_read_only_and_reports_both_roots() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn selected_skill_install_refuses_arbitrary_names_roots_and_paths() {
     let _guard = skill_files_lock();
     let h = setup_machine(FakeUserPath::default());
@@ -133,6 +138,7 @@ async fn selected_skill_install_refuses_arbitrary_names_roots_and_paths() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn skill_seats_are_listed_added_refreshed_and_forgotten() {
     let _guard = skill_files_lock();
     let h = setup_machine(FakeUserPath::default());
